@@ -57,7 +57,7 @@ void app_main(void)
     while (1) {
         // Perform read
         size_t bytes_read = 0;
-        esp_err_t ret_val = i2s_channel_read(mic_handle, &rxBuffer, bufferLen, &bytes_read, portMAX_DELAY);
+        esp_err_t ret_val = i2s_channel_read(mic_handle, &rxBuffer, bufferLen * 4, &bytes_read, portMAX_DELAY);
 
         if (ret_val == ESP_OK) {
             // Read succeeded, calculate and print out average + num samples read
@@ -70,8 +70,8 @@ void app_main(void)
                 mean /= samples_read;
             }
             // Print results to monitor
-            printf("Iter %d INMP441 avg readout: %.2f (%d samples)\n", 
-                    iter_ctr, mean, (int)samples_read);
+            printf("Iter %d INMP441 avg readout: %.2f (%d samples, first sample raw 0x%8x)\n", 
+                    iter_ctr, mean, (int)samples_read, (unsigned int)rxBuffer[0]);
         }
         // Flush stdout
         fflush(stdout);
