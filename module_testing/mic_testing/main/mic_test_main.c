@@ -15,8 +15,9 @@
 #define MIC_CLK_FREQ_HZ (44100)
 
 // Allocate buffer
-#define bufferLen (64)
-int32_t rxBuffer[bufferLen];
+#define BYTES_PER_SAMPLE (2) // 16-bit (this doesn't seem right...should be 24)
+#define RX_BUFFER_LEN (64)
+int16_t rxBuffer[RX_BUFFER_LEN];
 
 
 void app_main(void)
@@ -31,7 +32,7 @@ void app_main(void)
     // Init config
     i2s_std_config_t std_cfg = {
         .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(MIC_CLK_FREQ_HZ),
-        .slot_cfg = I2S_STD_MSB_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_STEREO),
+        .slot_cfg = I2S_STD_MSB_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO),
         .gpio_cfg = {
             .mclk = I2S_GPIO_UNUSED,
             .bclk = GPIO_NUM_25,
@@ -57,20 +58,22 @@ void app_main(void)
     while (1) {
         // Perform read
         size_t bytes_read = 0;
-        esp_err_t ret_val = i2s_channel_read(mic_handle, &rxBuffer, bufferLen * 4, &bytes_read, portMAX_DELAY);
+        esp_err_t ret_val = i2s_channel_read(
+            mic_handle, &rxBuffer, RX_BUFFER_LEN * BYTES_PER_SAMPLE, &bytes_read, portMAX_DELAY
+        );
 
         if (ret_val == ESP_OK) {
             // Read succeeded, calculate and print out average + num samples read
-            int32_t samples_read = bytes_read / 4; // 4B per sample
+            int16_t samples_read = bytes_read / BYTES_PER_SAMPLE;
             float mean = 0;
             if (samples_read > 0) {
-                for (int32_t i = 0; i < samples_read; i++) {
+                for (int16_t i = 0; i < samples_read; i++) {
                     mean += rxBuffer[i];
                 }
                 mean /= samples_read;
             }
             // Print results to monitor
-            printf("Iter %d INMP441 avg readout: %.2f (%d samples, first sample raw 0x%8x)\n", 
+            printf("Iter %d INMP441 avg readout: %.2f (%d samples, first sample raw 0x%4x)\n", 
                     iter_ctr, mean, (int)samples_read, (unsigned int)rxBuffer[0]);
         }
         // Flush stdout
