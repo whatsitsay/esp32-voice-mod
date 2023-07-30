@@ -15,10 +15,11 @@
 #include "driver/dac.h"
 
 #define DAC_I2S_CH (I2S_NUM_0)
-#define DAC_MAX (255) // 8-bit DAC
-#define I2S_SAMPLING_RATE (44100) // A little less than industry standard 44.1 kHz
+#define I2S_SAMPLING_RATE (44000) // A little less than industry standard 44.1 kHz
 #define WAVE_FREQ (440) // Concert A
-#define TX_BUFFER_LEN (32)
+#define WAVE_AMPLITUDE (256) // Will use L+R channel as differential input
+#define SAMPLES_PER_CYCLE (I2S_SAMPLING_RATE / WAVE_FREQ)
+int tx_buffer[SAMPLES_PER_CYCLE * 2]; // Double as each side is 32-bits
 
 void app_main(void)
 {
@@ -34,12 +35,12 @@ void app_main(void)
     i2s_config_t i2s_config = {
         .mode             = I2S_MODE_MASTER | I2S_MODE_TX | I2S_MODE_DAC_BUILT_IN,
         .sample_rate      = I2S_SAMPLING_RATE, // Industry standard
-        .bits_per_sample  = I2S_BITS_PER_SAMPLE_16BIT, // DAC will only use upper 8 MSB
+        .bits_per_sample  = I2S_BITS_PER_SAMPLE_32BIT, // DAC will only use upper 8 MSB
         .channel_format   = I2S_CHANNEL_FMT_RIGHT_LEFT,
         .communication_format = I2S_COMM_FORMAT_STAND_I2S,
         .intr_alloc_flags = 0,
         .dma_buf_count    = 2,
-        .dma_buf_len      = TX_BUFFER_LEN,
+        .dma_buf_len      = SAMPLES_PER_CYCLE * 4,
         .use_apll         = false,
     };
 
@@ -48,32 +49,32 @@ void app_main(void)
     // enable DAC output
     ESP_ERROR_CHECK(i2s_set_dac_mode(I2S_DAC_CHANNEL_BOTH_EN));
 
-    printf("Speaker channel initialized! Sending data...\n");
+    printf("Speaker channel initialized! Initializing wave...\n");
+
+    // Fill TX buffer with sine wave data, since it should be the same per write
+    for (int i = 0; i < SAMPLES_PER_CYCLE; i++) {
+        // Generate value based on sampling rate and A sine wave
+        float t = 1.0 * i / I2S_SAMPLING_RATE; // Time is sample idx * period
+        float sin_val_f = WAVE_AMPLITUDE * sin(2 * M_PI * WAVE_FREQ * t);
+        int sin_val = (int)sin_val_f; // Cast to integer
+        // Copy into upper-most byte.
+        // Channel will be 0 or value depending on if negative/positive
+        tx_buffer[2 * i]     = (sin_val_f > 0) ? (sin_val & 0xFF) << 24 : 0;
+        tx_buffer[2 * i + 1] = (sin_val_f < 0) ? ((-1 * sin_val) & 0xFF) << 24 : 0;
+        printf("Wave idx %d: float %.5f => %d (L 0x%8x, R 0x%8x)\n", i, sin_val_f, sin_val, tx_buffer[2*i], tx_buffer[2*i + 1]);
+    }
+    printf("Filled TX buffer! Now sending data.");
     fflush(stdout);
 
     // Main loop
-    int wave_idx = 0;
     while (1) {
-        // Fill TX buffer with sine wave data
-        // Generate value based on sampling rate and A sine wave
-        // Value should always be positive
-        // Calculate sine value
-        float t = 1.0 * wave_idx / I2S_SAMPLING_RATE;
-        int sin_val = (int)((DAC_MAX / 2) * sin(2 * M_PI * WAVE_FREQ * t));
-        // Increase by half
-        sin_val += DAC_MAX / 2;
-        // Mask for internal DAC
-        sin_val = (sin_val & 0xff) << 8;
-        // Copy twice into buffer, 2B apart, for L + R channels
-        uint32_t tx_data = (sin_val << 16) | sin_val;
-
         // Write to I2S
         size_t bytes_written = 0;
-        ESP_ERROR_CHECK(i2s_write(DAC_I2S_CH, &tx_data, sizeof(tx_data), &bytes_written, 1000));
+        ESP_ERROR_CHECK(i2s_write(DAC_I2S_CH, &tx_buffer, sizeof(tx_buffer), &bytes_written, 10000));
 
-        if (bytes_written < sizeof(tx_data)) {
+        if (bytes_written < sizeof(tx_buffer)) {
             printf("WARNING: Failed to write entire buffer! Only %d out of %d bytes\n",
-                   (int)bytes_written, (int)sizeof(tx_data));
+                   (int)bytes_written, (int)sizeof(tx_buffer));
             fflush(stdout);
         }
     }
