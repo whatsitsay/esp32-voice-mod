@@ -16,7 +16,7 @@
 
 // Allocate buffer
 #define BYTES_PER_SAMPLE (2) // 16-bit (this doesn't seem right...should be 24)
-#define RX_BUFFER_LEN (64)
+#define RX_BUFFER_LEN (1024)
 int16_t rxBuffer[RX_BUFFER_LEN];
 
 
@@ -32,10 +32,10 @@ void app_main(void)
     // Initialize config. Note: MONO defaults to left
     i2s_std_config_t std_cfg = {
         .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(MIC_CLK_FREQ_HZ),
-        .slot_cfg = I2S_STD_MSB_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO),
+        .slot_cfg = I2S_STD_MSB_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO),
         .gpio_cfg = {
             .mclk = I2S_GPIO_UNUSED,
-            .bclk = GPIO_NUM_25,
+            .bclk = GPIO_NUM_27,
             .ws   = GPIO_NUM_33,
             .dout = I2S_GPIO_UNUSED,
             .din  = GPIO_NUM_32,
@@ -67,20 +67,21 @@ void app_main(void)
             int16_t samples_read = bytes_read / BYTES_PER_SAMPLE;
             float mean = 0;
             if (samples_read > 0) {
-                for (int16_t i = 0; i < samples_read; i++) {
+                // Every other for only one side
+                for (int16_t i = 0; i < samples_read; i+= 2) {
                     mean += rxBuffer[i];
                 }
                 mean /= samples_read;
             }
             // Print results to monitor
-            printf("Iter %d INMP441 avg readout: %.2f (%d samples, first sample raw 0x%4x)\n", 
-                    iter_ctr, mean, (int)samples_read, (unsigned int)rxBuffer[0]);
+            printf("Iter %d INMP441 avg readout: %.2f (%d samples, first sample raw %d)\n", 
+                    iter_ctr, mean, (int)samples_read, (int)rxBuffer[0]);
         }
         // Flush stdout
         fflush(stdout);
 
         // Delay slightly, half second
-        vTaskDelay(500 / portTICK_PERIOD_MS);
+        vTaskDelay(200 / portTICK_PERIOD_MS);
         // Increment running counter
         iter_ctr++;
     }
