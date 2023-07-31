@@ -89,7 +89,8 @@ void app_main(void)
             // INMP441 returns stream of 32-bit values, we only need 8 MSB
             // If value is positive, grab 9 bits and exclude MSB (sign)
             // If value is negative, set to 0
-            txBuffer[i] = (rxBuffer[i] > 0) ? (uint8_t)(rxBuffer[i] >> 24) : 0;
+            int rx_val = (rxBuffer[i] > 0) ? (rxBuffer[i] >> 23) & 0xFF : 0;
+            txBuffer[i] = (uint8_t)rx_val;
         }
 
         // Perform write of same buffer to DAC
