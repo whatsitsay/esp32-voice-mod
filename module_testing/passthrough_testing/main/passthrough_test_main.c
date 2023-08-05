@@ -18,6 +18,7 @@
 #define BYTES_PER_SAMPLE (4) // According to spec, 32bits/word
 #define RX_BUFFER_LEN (4096) // Try bigger spec
 int rxBuffer[RX_BUFFER_LEN * 2]; // x2 for L + R channels
+int txBuffer[RX_BUFFER_LEN * 2];
 
 
 void app_main(void)
@@ -92,10 +93,14 @@ void app_main(void)
             continue;
         }
 
-        // Perform write of same buffer to audo jack
+        // Copy every other value of rxBuffer into txBuffer for both L and R
+        for (int i = 0; i < RX_BUFFER_LEN; i++) {
+            txBuffer[2 * i] = rxBuffer[2 * i];
+            txBuffer[2 * i + 1] = rxBuffer[2 * i];
+        }
 
-        // Flush stdout
-        ret_val = i2s_channel_write(aux_handle, &rxBuffer, bytes_read, &bytes_written, 5000);
+
+        ret_val = i2s_channel_write(aux_handle, &txBuffer, bytes_read, &bytes_written, 5000);
         if (ret_val != ESP_OK || bytes_written != bytes_read) {
             printf("WARNING: write failed! Err code %d, %d bytes written\n", (int)ret_val, bytes_written);
         }
