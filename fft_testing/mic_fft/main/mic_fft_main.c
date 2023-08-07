@@ -15,7 +15,7 @@
 #include "esp_dsp.h"
 
 // Local macros
-#define I2S_SAMPLING_FREQ_HZ (44100)
+#define I2S_SAMPLING_FREQ_HZ (40960) // Lower for more even freq resolution
 // Number of sample buffers per FFT calc
 #define FFT_SAMPLING_COUNT (5)
 
@@ -88,9 +88,8 @@ void app_main(void)
             // Skip every other, as it should only be L channel with data
             int rx_val = rxBuffer[2 * i];
             // Cut out lower 8 bits and convert to float
+            // Avoids overflow
             float rx_f = (float)(rx_val / 256);
-            // Normalize further by dividing by 1 << 16 (65536)
-            rx_f /= 65536.0;
             
             // Dot-multiply with Hann windows to reduce effect of edges
             rx_FFT[2 * i] = rx_f * hann_win[i];
@@ -101,6 +100,7 @@ void app_main(void)
         unsigned int start_b = dsp_get_cpu_cycle_count();
         dsps_fft2r_fc32_ae32(rx_FFT, RX_BUFFER_LEN);
         unsigned int end_b = dsp_get_cpu_cycle_count();
+        float fft_comp_time_ms = (float)(end_b - start_b)/240e3;
 
         // Bit reverse
         dsps_bit_rev_fc32(rx_FFT, RX_BUFFER_LEN);
@@ -118,8 +118,8 @@ void app_main(void)
         
         // Show results
         ESP_LOGI(TAG, "Mic spectra magnitude (raw) (up to < 3 kHz)");
-        dsps_view(rx_FFT_mag_raw, 256, 128, 10, 0, 50, '|');
-        ESP_LOGI(TAG, "FFT for %i complex points take %i cycles", RX_BUFFER_LEN, end_b - start_b);
+        dsps_view(rx_FFT_mag_raw, 256, 128, 10, 0, 2500000, '|');
+        ESP_LOGI(TAG, "FFT for %i complex points take %i cycles (%.3f ms)", RX_BUFFER_LEN, end_b - start_b, fft_comp_time_ms);
     }
 
     // If this point is hit, wait some time then restart
