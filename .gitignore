@@ -33,3 +33,4 @@
 
 # Build outputs
 **/build/*
+**/dependencies.lock
