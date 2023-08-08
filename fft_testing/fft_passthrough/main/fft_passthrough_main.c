@@ -138,6 +138,12 @@ void app_main(void)
         size_t bytes_read = 0, bytes_written = 0;
         esp_err_t ret_val;
 
+        // Copy rxBuffer into rxBuffer_overlap
+        for (int i = 0; i < RX_BUFFER_LEN; i++)
+        {
+            rxBuffer_overlap[i] = rxBuffer[2 * i];
+        }
+
         // Perform read
         ret_val = i2s_channel_read(mic_handle, &rxBuffer, sizeof(rxBuffer), &bytes_read, 5000);
 
@@ -149,21 +155,15 @@ void app_main(void)
         ////// FFT CALCULATION BEGIN ///////
         unsigned int start_cc = dsp_get_cpu_cycle_count();
 
-        // Copy values of rxBuffer_overlap into FFT buffer. It will be the initial values
-        for (int i = 0; i < RX_BUFFER_LEN; i++) {
-            // Divide by 256 to overlapent overflow, dot-product with hann window
-            // Only real values so odd entries can be ignored
-            rx_FFT[2 * i] = (float)(rxBuffer_overlap[i] / 256) * hann_win[i];
-        }
+        // Copy values of rxBuffer into FFT buffer
+        for (int i = 0; i < N_SAMPLES; i++) {
+            // Select sample. If first half, use rxBuffer_overlap. Otherwise use rxBuffer
+            int rx_val = (i < RX_BUFFER_LEN) ? rxBuffer_overlap[i] : rxBuffer[2 * (i - RX_BUFFER_LEN)];
 
-        // Copy values of rxBuffer into FFT buffer. It will be the latter values
-        for (int i = 0; i < RX_BUFFER_LEN; i++) {
-            // Divide by 256 to overlapent overflow, dot-product with hann window
-            // Offset by RX_BUFFER_LEN for latter half
-            // Only real values so odd entries can be ignored
-            rx_FFT[2 * (i + RX_BUFFER_LEN)] = (float)(rxBuffer[2 * i] / 256) * hann_win[i + RX_BUFFER_LEN];
-            // Store in overlap buffer as well
-            rxBuffer_overlap[i] = rxBuffer[2 * i];
+            // Dot-product with hann window
+            rx_FFT[2 * i] = (float)rx_val * hann_win[i];
+            // Set imaginary component to 0
+            rx_FFT[2 * i + 1] = 0;
         }
 
         // FFT Calculation
@@ -179,7 +179,7 @@ void app_main(void)
         }
 
         // Perform iFFT calc
-        ifft(tx_iFFT, N);
+        ESP_ERROR_CHECK(ifft(tx_iFFT, N));
         
         unsigned int end_cc = dsp_get_cpu_cycle_count();
         ////// FFT CALCULATION END ///////
@@ -187,13 +187,13 @@ void app_main(void)
         for (int i = 0; i < RX_BUFFER_LEN; i++)
         {
             // Add-overlay beginning portion of iFFT into txBuffer
-            // Multiply by 256 for proper shift
-            txBuffer[2 * i] = txBuffer_overlap[i] + (int)(tx_iFFT[2 * i]);
-            txBuffer[2 * i] *= 256;
+            int tx_val = tx_iFFT[2 * i];
+            txBuffer[2 * i] = txBuffer_overlap[i] + tx_val;
             txBuffer[2 * i + 1] = txBuffer[2 * i]; // Copy L and R
 
             // Store latter portion for use next loop
-            txBuffer_overlap[i] = (int)(tx_iFFT[2 * (i + RX_BUFFER_LEN)]);
+            int tx_overlap_val = tx_iFFT[2 * (i + RX_BUFFER_LEN)];
+            txBuffer_overlap[i] = tx_overlap_val;
         }
         
 
