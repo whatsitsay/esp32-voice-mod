@@ -41,20 +41,25 @@ static const char *TAG = "main";
  * Helper function for inverse FFT
  * Assumes FFT is full, and coefficients have been generated
 */
-esp_err_t ifft(float* fft_arr, int num_samples)
+esp_err_t inv_fft(float* fft_arr, int num_samples)
 {
+    // Invert all imaginary values by multiplying by -1
+    // This entails all odd entries
     for (int i = 0; i < num_samples; i++)
     {
-        // Invert all imaginary values by multiplying by -1
-        // This entails all odd entries
         fft_arr[2 * i + 1] *= -1;
     }
 
     ESP_ERROR_CHECK(dsps_fft2r_fc32_ae32(fft_arr, num_samples)); 
     ESP_ERROR_CHECK(dsps_bit_rev_fc32(fft_arr, num_samples)); 
 
-    // Normally would need to invert imaginary component of signal,
-    // but this assumes the imaginary component is 0 (only real vals)
+    // Correct all real values by sample size
+    // Change all imaginary components to 0
+    for (int i = 0; i < num_samples; i++)
+    {
+        fft_arr[2 * i] /= (float)num_samples;
+        fft_arr[2 * i + 1] = 0;
+    }
 
     return ESP_OK;
 }
@@ -161,7 +166,8 @@ void app_main(void)
             int rx_val = (i < RX_BUFFER_LEN) ? rxBuffer_overlap[i] : rxBuffer[2 * (i - RX_BUFFER_LEN)];
 
             // Dot-product with hann window
-            rx_FFT[2 * i] = (float)rx_val * hann_win[i];
+            // Divide by 256 to prevent overflow (last 8 bits are always 0)
+            rx_FFT[2 * i] = (float)(rx_val / 256) * hann_win[i];
             // Set imaginary component to 0
             rx_FFT[2 * i + 1] = 0;
         }
@@ -179,7 +185,7 @@ void app_main(void)
         }
 
         // Perform iFFT calc
-        ESP_ERROR_CHECK(ifft(tx_iFFT, N));
+        inv_fft(tx_iFFT, N);
         
         unsigned int end_cc = dsp_get_cpu_cycle_count();
         ////// FFT CALCULATION END ///////
@@ -188,7 +194,7 @@ void app_main(void)
         {
             // Add-overlay beginning portion of iFFT into txBuffer
             int tx_val = tx_iFFT[2 * i];
-            txBuffer[2 * i] = txBuffer_overlap[i] + tx_val;
+            txBuffer[2 * i] = (txBuffer_overlap[i] + tx_val) * 256; // Re-multiply by 256 for proper alignment
             txBuffer[2 * i + 1] = txBuffer[2 * i]; // Copy L and R
 
             // Store latter portion for use next loop
