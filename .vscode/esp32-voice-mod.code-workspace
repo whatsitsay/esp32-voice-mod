@@ -1,0 +1,46 @@
+{
+  "folders": [
+    {
+      "path": "../fft_testing/fft_passthrough"
+    },
+    {
+      "path": "../fft_testing/mic_fft"
+    },
+    {
+      "path": "../module_testing/passthrough_testing"
+    }
+  ],
+  "settings": {
+    "idf.portWin": "COM3",
+    "files.associations": {
+      "freertos.h": "c",
+      "sdkconfig.h": "c",
+      "esp_err.h": "c",
+      "i2s_common.h": "c",
+      "task.h": "c",
+      "esp_flash.h": "c",
+      "esp_chip_info.h": "c",
+      "esp_bit_defs.h": "c",
+      "i2c.h": "c",
+      "i2c_types.h": "c",
+      "esp_timer.h": "c",
+      "gpio.h": "c",
+      "ets_sys.h": "c",
+      "dac.h": "c",
+      "dac_common.h": "c",
+      "i2s_pdm.h": "c",
+      "i2s_std.h": "c",
+      "i2s.h": "c",
+      "queue.h": "c",
+      "i2s_types.h": "c",
+      "adc_oneshot.h": "c",
+      "dac_periph.h": "c",
+      "dac_continuous.h": "c",
+      "array": "c",
+      "vector": "c",
+      "xstring": "c",
+      "xutility": "c"
+    },
+    "idf.espIdfPath": "${env:IDF_PATH}"
+  }
+}

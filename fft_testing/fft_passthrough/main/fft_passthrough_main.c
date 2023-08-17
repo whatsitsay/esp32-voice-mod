@@ -23,17 +23,16 @@
 #define N_SAMPLES (4096)
 #define RX_BUFFER_LEN (N_SAMPLES / 2) // Try bigger spec
 // rx/tx buffers. Size doubled for L+R (even if only R is used)
-int rxBuffer[RX_BUFFER_LEN * 2];
-int txBuffer[RX_BUFFER_LEN * 2];
-// Overlap buffers. Size halved to conserve memory footprint
-int rxBuffer_overlap[RX_BUFFER_LEN]; 
-int txBuffer_overlap[RX_BUFFER_LEN]; 
 int N = N_SAMPLES;
 
 // FFT buffers
 __attribute__((aligned(16))) float hann_win[N_SAMPLES];
 __attribute__((aligned(16))) float rx_FFT[N_SAMPLES * 2]; // Will be complex
 __attribute__((aligned(16))) float tx_iFFT[N_SAMPLES * 2];
+
+// Instantiate pointers to debug buffers
+float rx_dbg[N_SAMPLES * 2];
+float tx_dbg[N_SAMPLES * 2];
 
 static const char *TAG = "main";
 
@@ -72,6 +71,12 @@ void app_main(void)
     // Init channel
     i2s_chan_config_t mic_chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
     i2s_new_channel(&mic_chan_cfg, NULL, &mic_handle);
+    
+    // Instantiate pointers to rx/tx buffers
+    int* rxBuffer = (int *)calloc(RX_BUFFER_LEN * 2, sizeof(int));
+    int* txBuffer = (int *)calloc(RX_BUFFER_LEN * 2, sizeof(int));
+    int* rxBuffer_overlap = (int *)calloc(RX_BUFFER_LEN, sizeof(int));
+    int* txBuffer_overlap = (int *)calloc(RX_BUFFER_LEN, sizeof(int));
 
     // Initialize config
     i2s_std_config_t mic_cfg = {
@@ -129,10 +134,6 @@ void app_main(void)
     dsps_wind_hann_f32(hann_win, N_SAMPLES);
 
     // Set buffers to 0
-    memset(rxBuffer, 0, sizeof(rxBuffer));
-    memset(txBuffer, 0, sizeof(txBuffer));
-    memset(rxBuffer_overlap, 0, sizeof(rxBuffer_overlap));
-    memset(txBuffer_overlap, 0, sizeof(txBuffer_overlap));
     memset(rx_FFT, 0.0, sizeof(rx_FFT));
     memset(tx_iFFT, 0.0, sizeof(tx_iFFT));
     
@@ -172,6 +173,9 @@ void app_main(void)
             rx_FFT[2 * i + 1] = 0;
         }
 
+        // Copy to debug buffer
+        memcpy(rx_dbg, rx_FFT, sizeof(rx_FFT));
+
         // FFT Calculation
         dsps_fft2r_fc32_ae32(rx_FFT, N);
         // Reverse bits
@@ -183,6 +187,8 @@ void app_main(void)
         {
             tx_iFFT[i] = rx_FFT[i];
         }
+        // Copy over to debug
+        memcpy(tx_dbg, tx_iFFT, sizeof(tx_iFFT));
 
         // Perform iFFT calc
         inv_fft(tx_iFFT, N);
