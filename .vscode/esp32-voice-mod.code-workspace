@@ -11,6 +11,9 @@
     },
     {
       "path": "../fft_testing/fft_pure_tone"
+    },
+    {
+      "path": "../module_testing/audio_jack_testing"
     }
   ],
   "settings": {
