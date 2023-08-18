@@ -44,7 +44,8 @@
       "xstring": "c",
       "xutility": "c",
       "cstdlib": "c",
-      "esp_task_wdt.h": "c"
+      "esp_task_wdt.h": "c",
+      "dsps_wind_hann.h": "c"
     },
     "idf.espIdfPath": "${env:IDF_PATH}"
   }

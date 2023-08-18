@@ -16,15 +16,16 @@
 #include "esp_dsp.h"
 
 // Local macros
-#define TONE_FREQ_HZ (440.0) // Concert A
+#define TONE_BITS (23)
+#define TONE_AMPL ((1 << TONE_BITS) - 1)
+#define TONE_FREQ_HZ (440) // Should roughly match up
 #define I2S_SAMPLING_FREQ_HZ (40960) // Lower for more even freq resolution
-#define TONE_FREQ_ARR (TONE_FREQ_HZ / I2S_SAMPLING_FREQ_HZ)
+#define TONE_FREQ_SIN (1.0 * TONE_FREQ_HZ / I2S_SAMPLING_FREQ_HZ) // Sinusoid apparent freq
 
 // Allocate buffer
-#define SAMPLES_PER_AVG (50)
-#define BYTES_PER_SAMPLE (4) // According to spec, 32bits/word
-#define N_SAMPLES (2048) // Smaller for debugging
-#define RX_BUFFER_LEN (N_SAMPLES / 2) // Try bigger spec
+#define SAMPLES_PER_AVG (149)
+#define N_SAMPLES (4096)
+#define TX_BUFFER_LEN (N_SAMPLES / 2) // Try bigger spec
 int N = N_SAMPLES;
 
 // FFT buffers
@@ -33,9 +34,15 @@ __attribute__((aligned(16))) float rx_FFT[N_SAMPLES * 2]; // Will be complex
 __attribute__((aligned(16))) float tx_iFFT[N_SAMPLES * 2];
 
 // Instantiate pointers to debug buffers
-float tone_buffer[RX_BUFFER_LEN];
-float tone_arr[N_SAMPLES * 2];
-int txBuffer[RX_BUFFER_LEN * 2];
+#define SAMPLES_PER_CYCLE (I2S_SAMPLING_FREQ_HZ / TONE_FREQ_HZ)
+#define TONE_SAMPLE_LEN (5 * SAMPLES_PER_CYCLE) // Even division
+#define PLOT_LEN (2 * SAMPLES_PER_CYCLE)
+float tone_buffer[TONE_SAMPLE_LEN];
+float rx_dbg[TX_BUFFER_LEN];
+float tx_dbg[TX_BUFFER_LEN];
+float rx_tx_diff_raw[TX_BUFFER_LEN];
+float rx_tx_diff_pct[TX_BUFFER_LEN];
+int txBuffer[TX_BUFFER_LEN * 2]; // L + R
 
 static const char *TAG = "main";
 
@@ -60,7 +67,6 @@ esp_err_t inv_fft(float* fft_arr, int num_samples)
     for (int i = 0; i < num_samples; i++)
     {
         fft_arr[2 * i] /= (float)num_samples; // Correction factor
-        // fft_arr[2 * i] /= hann_win[i]; // Correct for window
         // Conjugate of imaginary component (should be close to 0)
         fft_arr[2 * i + 1] /= (float)num_samples;
         fft_arr[2 * i + 1] *= -1;
@@ -72,7 +78,7 @@ esp_err_t inv_fft(float* fft_arr, int num_samples)
 void app_main(void)
 {
     // Instantiate pointers to tx buffers
-    int* txBuffer_overlap = (int *)calloc(RX_BUFFER_LEN, sizeof(int));
+    float* txBuffer_overlap = (float *)calloc(TX_BUFFER_LEN, sizeof(int));
 
     i2s_chan_handle_t aux_handle;
     
@@ -111,13 +117,7 @@ void app_main(void)
     dsps_wind_hann_f32(hann_win, N_SAMPLES);
 
     // Generate tone array
-    // Amplitude is 2^23 for max absolute value of 24-bit integer (doesn't include sign)
-    dsps_tone_gen_f32(tone_buffer, N_SAMPLES, 1 << 23, TONE_FREQ_ARR, 0);
-    // Pre dot-product with hann window
-    for (int i = 0; i < N_SAMPLES; i++) {
-        tone_arr[2 * i] = tone_buffer[i] * hann_win[i]; // Real component
-        tone_arr[2 * i + 1] = 0; // Imaginary component
-    }
+    dsps_tone_gen_f32(tone_buffer, TONE_SAMPLE_LEN, TONE_AMPL, TONE_FREQ_SIN, 0);
 
     // Set buffers to 0
     memset(rx_FFT, 0.0, sizeof(rx_FFT));
@@ -133,11 +133,21 @@ void app_main(void)
         size_t bytes_read = 0, bytes_written = 0;
         esp_err_t ret_val;
 
+        // Copy values manually from tone buffer into FFT and rx_dbg arrays
+        for (int i = 0; i < N_SAMPLES; i++) {
+            int tone_arr_idx = (i + loop_count * TX_BUFFER_LEN) % TONE_SAMPLE_LEN; // Offset based on loop index
+            float tone_val = tone_buffer[tone_arr_idx];
+            rx_FFT[2 * i] = tone_val * hann_win[i]; // Window result
+            rx_FFT[2 * i + 1] = 0; // No imaginary component, real signal
+
+            // Copy to debug buffer for first half
+            // Floor function to match tx_dbg
+            if (i < TX_BUFFER_LEN) rx_dbg[i] = tone_val;
+        }
+
+
         ////// FFT CALCULATION BEGIN ///////
         unsigned int start_cc = dsp_get_cpu_cycle_count();
-
-        // Copy values of tone tone array into FFT buffer
-        memcpy(rx_FFT, tone_arr, sizeof(rx_FFT));
 
         // FFT Calculation
         dsps_fft2r_fc32(rx_FFT, N);
@@ -156,15 +166,19 @@ void app_main(void)
         unsigned int end_cc = dsp_get_cpu_cycle_count();
         ////// FFT CALCULATION END ///////
 
-        for (int i = 0; i < RX_BUFFER_LEN; i++)
+        for (int i = 0; i < TX_BUFFER_LEN; i++)
         {
             // Add-overlay beginning portion of iFFT into txBuffer
-            int tx_val = tx_iFFT[2 * i];
-            txBuffer[2 * i] = (txBuffer_overlap[i] + tx_val) * 256; // Max out int value
+            float tx_val = tx_iFFT[2 * i];
+            txBuffer[2 * i] = (int)(txBuffer_overlap[i] + tx_val); 
+            txBuffer[2 * i] <<= (30 - TONE_BITS); // Increase int value
             txBuffer[2 * i + 1] = txBuffer[2 * i]; // Copy L and R
 
+            // Store TX val to debug array for later comparison
+            tx_dbg[i] = txBuffer_overlap[i] + tx_val;
+
             // Store latter portion for use next loop
-            int tx_overlap_val = tx_iFFT[2 * (i + RX_BUFFER_LEN)];
+            float tx_overlap_val = tx_iFFT[2 * (i + TX_BUFFER_LEN)];
             txBuffer_overlap[i] = tx_overlap_val;
         }
         
@@ -185,19 +199,22 @@ void app_main(void)
             float fft_calc_time_avg = fft_calc_time_sum / SAMPLES_PER_AVG;
             // Calculate average error per element of most recent sample
             float avg_element_err_pct = 0;
-            float rx_val, tx_val;
-            for (int i = 0; i < N_SAMPLES; i++)
+            for (int i = 0; i < TX_BUFFER_LEN; i++)
             {
-                rx_val = tone_arr[2 * i];
-                tx_val = tx_iFFT[2 * i];
-                avg_element_err_pct += (rx_val != 0) ? fabsf(tx_val - rx_val) / rx_val :
-                                       (tx_val == 0) ? 0 : 1.0;
+                rx_tx_diff_raw[i] = tx_dbg[i] - rx_dbg[i];
+                rx_tx_diff_pct[i] = (rx_dbg[i] != 0) ? rx_tx_diff_raw[i] / fabsf(rx_dbg[i]) :
+                                    (tx_dbg[i] == 0) ? 0 : 1.0;
+                rx_tx_diff_pct[i] *= 100.0;
+                avg_element_err_pct += fabsf(rx_tx_diff_pct[i]);
             }
-            avg_element_err_pct /= N_SAMPLES;
-            avg_element_err_pct *= 100.0;
+            avg_element_err_pct /= TX_BUFFER_LEN;
             
-            ESP_LOGI(TAG, "Loop %i average FFT/iFFT calc time: %.4f ms, avg error: %.2f %%",
+            ESP_LOGW(TAG, "Loop %i average FFT/iFFT calc time: %.4f ms, avg error: %.2f %%",
                 loop_count, fft_calc_time_avg, avg_element_err_pct);
+            ESP_LOGI(TAG, "Input signal:");
+            dsps_view(rx_dbg, PLOT_LEN, PLOT_LEN / 2, 15, -1 * TONE_AMPL, TONE_AMPL, '*');
+            ESP_LOGI(TAG, "Output signal:");
+            dsps_view(tx_dbg, PLOT_LEN, PLOT_LEN / 2, 15, -1 * TONE_AMPL, TONE_AMPL, '*');
             // Clear sum
             fft_calc_time_sum = 0;
         }
