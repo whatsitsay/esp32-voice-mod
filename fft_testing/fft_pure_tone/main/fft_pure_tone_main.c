@@ -16,8 +16,8 @@
 #include "esp_dsp.h"
 
 // Local macros
-#define TONE_BITS (23)
-#define TONE_AMPL ((1 << TONE_BITS) - 1)
+#define TONE_BITS (24)
+#define TONE_AMPL (powf(2, TONE_BITS - 2)) // Effectively divide by 2
 #define TONE_FREQ_HZ (440) // Should roughly match up
 #define I2S_SAMPLING_FREQ_HZ (40960) // Lower for more even freq resolution
 #define TONE_FREQ_SIN (1.0 * TONE_FREQ_HZ / I2S_SAMPLING_FREQ_HZ) // Sinusoid apparent freq
@@ -67,6 +67,7 @@ esp_err_t inv_fft(float* fft_arr, int num_samples)
     for (int i = 0; i < num_samples; i++)
     {
         fft_arr[2 * i] /= (float)num_samples; // Correction factor
+        // fft_arr[2 * i] *= hann_win[i]; // For proper reconstruction
         // Conjugate of imaginary component (should be close to 0)
         fft_arr[2 * i + 1] /= (float)num_samples;
         fft_arr[2 * i + 1] *= -1;
@@ -109,7 +110,7 @@ void app_main(void)
     // Enable channels
     ESP_ERROR_CHECK(i2s_channel_enable(aux_handle));
 
-    ESP_LOGI(TAG, "Channels initiated! Initializing FFT coefficients");
+    ESP_LOGW(TAG, "Channels initiated! Initializing FFT coefficients");
     // Generate sin/cos coefficients for FFT calculations
     ESP_ERROR_CHECK(dsps_fft2r_init_fc32(NULL, N_SAMPLES));
 
@@ -130,7 +131,7 @@ void app_main(void)
     unsigned int loop_count = 0;
     float fft_calc_time_sum = 0;
     while (1) {
-        size_t bytes_read = 0, bytes_written = 0;
+        size_t bytes_written = 0;
         esp_err_t ret_val;
 
         // Copy values manually from tone buffer into FFT and rx_dbg arrays
@@ -171,7 +172,7 @@ void app_main(void)
             // Add-overlay beginning portion of iFFT into txBuffer
             float tx_val = tx_iFFT[2 * i];
             txBuffer[2 * i] = (int)(txBuffer_overlap[i] + tx_val); 
-            txBuffer[2 * i] <<= (30 - TONE_BITS); // Increase int value
+            txBuffer[2 * i] <<= (32 - TONE_BITS); // Increase int value
             txBuffer[2 * i + 1] = txBuffer[2 * i]; // Copy L and R
 
             // Store TX val to debug array for later comparison
@@ -183,8 +184,8 @@ void app_main(void)
         }
         
 
-        ret_val = i2s_channel_write(aux_handle, &txBuffer, bytes_read, &bytes_written, 5000);
-        if (ret_val != ESP_OK || bytes_written != bytes_read) {
+        ret_val = i2s_channel_write(aux_handle, &txBuffer, TX_BUFFER_LEN, &bytes_written, portMAX_DELAY);
+        if (ret_val != ESP_OK || bytes_written != TX_BUFFER_LEN) {
             ESP_LOGW(TAG, "Write failed! Err code %d, %d bytes written", (int)ret_val, bytes_written);
         }
 
