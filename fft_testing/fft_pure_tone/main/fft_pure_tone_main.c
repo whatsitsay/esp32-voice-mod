@@ -17,13 +17,14 @@
 
 // Local macros
 #define TONE_BITS (24)
-#define TONE_AMPL (powf(2, TONE_BITS - 2)) // Effectively divide by 2
-#define TONE_FREQ_HZ (440) // Should roughly match up
+#define TONE_AMPL (powf(2, TONE_BITS - 1) * 0.75) // Less than max 
+#define SAMPLES_PER_CYCLE (128) // Even for I2S
 #define I2S_SAMPLING_FREQ_HZ (40960) // Lower for more even freq resolution
+#define TONE_FREQ_HZ (I2S_SAMPLING_FREQ_HZ / SAMPLES_PER_CYCLE) // A little backwards, but should help even wave
 #define TONE_FREQ_SIN (1.0 * TONE_FREQ_HZ / I2S_SAMPLING_FREQ_HZ) // Sinusoid apparent freq
 
 // Allocate buffer
-#define SAMPLES_PER_AVG (149)
+#define SAMPLES_PER_AVG (499)
 #define N_SAMPLES (4096)
 #define TX_BUFFER_LEN (N_SAMPLES / 2) // Try bigger spec
 int N = N_SAMPLES;
@@ -34,8 +35,7 @@ __attribute__((aligned(16))) float rx_FFT[N_SAMPLES * 2]; // Will be complex
 __attribute__((aligned(16))) float tx_iFFT[N_SAMPLES * 2];
 
 // Instantiate pointers to debug buffers
-#define SAMPLES_PER_CYCLE (I2S_SAMPLING_FREQ_HZ / TONE_FREQ_HZ)
-#define TONE_SAMPLE_LEN (5 * SAMPLES_PER_CYCLE) // Even division
+#define TONE_SAMPLE_LEN (N_SAMPLES) // Even division
 #define PLOT_LEN (2 * SAMPLES_PER_CYCLE)
 float tone_buffer[TONE_SAMPLE_LEN];
 float rx_dbg[TX_BUFFER_LEN];
@@ -134,10 +134,12 @@ void app_main(void)
         size_t bytes_written = 0;
         esp_err_t ret_val;
 
+        unsigned int start_cc = dsp_get_cpu_cycle_count();
+
         // Copy values manually from tone buffer into FFT and rx_dbg arrays
         for (int i = 0; i < N_SAMPLES; i++) {
-            int tone_arr_idx = (i + loop_count * TX_BUFFER_LEN) % TONE_SAMPLE_LEN; // Offset based on loop index
-            float tone_val = tone_buffer[tone_arr_idx];
+            // No need to change index, should be identical each time
+            float tone_val = tone_buffer[i];
             rx_FFT[2 * i] = tone_val * hann_win[i]; // Window result
             rx_FFT[2 * i + 1] = 0; // No imaginary component, real signal
 
@@ -148,9 +150,8 @@ void app_main(void)
 
 
         ////// FFT CALCULATION BEGIN ///////
-        unsigned int start_cc = dsp_get_cpu_cycle_count();
 
-        // FFT Calculation
+        // // FFT Calculation
         dsps_fft2r_fc32(rx_FFT, N);
         // Reverse bits
         dsps_bit_rev_fc32(rx_FFT, N);
@@ -163,8 +164,7 @@ void app_main(void)
         }
         // Perform iFFT calc
         inv_fft(tx_iFFT, N);
-        
-        unsigned int end_cc = dsp_get_cpu_cycle_count();
+
         ////// FFT CALCULATION END ///////
 
         for (int i = 0; i < TX_BUFFER_LEN; i++)
@@ -183,8 +183,9 @@ void app_main(void)
             txBuffer_overlap[i] = tx_overlap_val;
         }
         
+        unsigned int end_cc = dsp_get_cpu_cycle_count();
 
-        ret_val = i2s_channel_write(aux_handle, &txBuffer, TX_BUFFER_LEN, &bytes_written, portMAX_DELAY);
+        ret_val = i2s_channel_write(aux_handle, txBuffer, TX_BUFFER_LEN, &bytes_written, portMAX_DELAY);
         if (ret_val != ESP_OK || bytes_written != TX_BUFFER_LEN) {
             ESP_LOGW(TAG, "Write failed! Err code %d, %d bytes written", (int)ret_val, bytes_written);
         }
