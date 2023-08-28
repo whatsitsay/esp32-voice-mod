@@ -18,7 +18,7 @@
 #define I2S_DOWNSHIFT (8) // 24-bit precision, can downshift safely by byte for FFT calcs
 
 // Allocate buffer
-#define SAMPLES_PER_AVG (50)
+#define SAMPLES_PER_AVG (100)
 #define BYTES_PER_SAMPLE (4) // According to spec, 32bits/word
 #define N_SAMPLES (4096)
 #define RX_BUFFER_LEN (N_SAMPLES / 2) // Try bigger spec
@@ -52,12 +52,12 @@ esp_err_t inv_fft(float* fft_arr, int num_samples)
     ESP_ERROR_CHECK(dsps_fft2r_fc32_ae32(fft_arr, num_samples)); 
     ESP_ERROR_CHECK(dsps_bit_rev_fc32(fft_arr, num_samples)); 
 
-    // Correct all real values by sample size
-    // Change all imaginary components to 0
-    for (int i = 0; i < num_samples; i++)
+    // Correct all values by sample size and hann window
+    for (int i = 0; i < 2 * num_samples; i++)
     {
-        fft_arr[2 * i] /= (float)num_samples;
-        fft_arr[2 * i + 1] = 0;
+        fft_arr[i] /= (float)num_samples;
+        fft_arr[i] *= hann_win[i/2];
+        if (i % 2 == 1) fft_arr[i] *= -1; // Should be ~0, but to be safe
     }
 
     return ESP_OK;
