@@ -11,6 +11,7 @@
 #include "esp_err.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/stream_buffer.h"
 #include "driver/i2s_std.h"
 #include "driver/gpio.h"
 #include "esp_dsp.h"
@@ -23,9 +24,10 @@
 #define TONE_FREQ_HZ (I2S_SAMPLING_FREQ_HZ / SAMPLES_PER_CYCLE) // A little backwards, but should help even wave
 #define TONE_FREQ_SIN (1.0 * TONE_FREQ_HZ / I2S_SAMPLING_FREQ_HZ) // Sinusoid apparent freq
 
-// Allocate buffer
-#define SAMPLES_PER_AVG (499)
+#define SAMPLES_PER_AVG (100)
 #define N_SAMPLES (4096)
+#define I2S_POP_SIZE (256) // Popped off in chunks to prevent staying in callback for too long
+#define I2S_POP_SIZE_B (I2S_POP_SIZE * 4)
 #define TX_BUFFER_LEN (N_SAMPLES / 2) // Try bigger spec
 int N = N_SAMPLES;
 
@@ -42,9 +44,16 @@ float rx_dbg[TX_BUFFER_LEN];
 float tx_dbg[TX_BUFFER_LEN];
 float rx_tx_diff_raw[TX_BUFFER_LEN];
 float rx_tx_diff_pct[TX_BUFFER_LEN];
-int txBuffer[TX_BUFFER_LEN * 2]; // L + R
 
-static const char *TAG = "main";
+// Stream handles
+i2s_chan_handle_t aux_handle;
+StreamBufferHandle_t xTxStreamBuffer;
+#define STREAM_BUFFER_SIZE_B (2 * TX_BUFFER_LEN * 4) // Will this be enough?
+// Task handles
+TaskHandle_t xDSPTaskHandle;
+#define DSP_TASK_STACK_SIZE (16384u) // Check watermark!
+
+////// HELPER FUNCTIONS //////
 
 /**
  * Helper function for inverse FFT
@@ -76,64 +85,51 @@ esp_err_t inv_fft(float* fft_arr, int num_samples)
     return ESP_OK;
 }
 
-void app_main(void)
+///// CALLBACKS ///// 
+
+// Called whenever buffer for output has been emptied
+// There shoud be data ready from the main task by this point
+static IRAM_ATTR bool aux_tx_sent_callback(i2s_chan_handle_t handle, i2s_event_data_t *event, void *user_ctx)
 {
-    // Instantiate pointers to tx buffers
-    float* txBuffer_overlap = (float *)calloc(TX_BUFFER_LEN, sizeof(int));
+    size_t data_popped, data_written;
+    static const char *TAG = "I2S TX sent callback";
+    // Pop data from stream
+    int* stream_data = (int *)calloc(I2S_POP_SIZE, sizeof(int));
+    data_popped = xStreamBufferReceiveFromISR(xTxStreamBuffer, stream_data, I2S_POP_SIZE_B, NULL);
+    if (data_popped != I2S_POP_SIZE_B) {
+        ESP_LOGW(TAG, "Only popped %d out of %d bytes from stream", data_popped, I2S_POP_SIZE_B);
+    }
 
-    i2s_chan_handle_t aux_handle;
-    
-    // Init channel
-    ESP_LOGI(TAG, "Initializing DAC I2S interface");
-    i2s_chan_config_t aux_chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_1, I2S_ROLE_MASTER);
-    i2s_new_channel(&aux_chan_cfg, &aux_handle, NULL);
+    ESP_ERROR_CHECK(i2s_channel_write(handle, stream_data, data_popped, &data_written, 1000));
+    if (data_written != data_popped) {
+        ESP_LOGW(TAG, "Only wrote %d out of %d bytes to I2S buffer", data_written, data_popped);
+    }
+    free(stream_data);
 
-    // Initialize config
-    i2s_std_config_t aux_cfg = {
-        .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(I2S_SAMPLING_FREQ_HZ),
-        .slot_cfg = I2S_STD_MSB_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_STEREO),
-        .gpio_cfg = {
-            .mclk = I2S_GPIO_UNUSED,
-            .bclk = GPIO_NUM_17,
-            .ws   = GPIO_NUM_4,
-            .dout = GPIO_NUM_16,
-            .din  = I2S_GPIO_UNUSED,
-            .invert_flags = {
-                .mclk_inv = false,
-                .bclk_inv = false,
-                .ws_inv   = false,
-            }
-        }
-    };
-    ESP_ERROR_CHECK(i2s_channel_init_std_mode(aux_handle, &aux_cfg));
+    return false; // FIXME what does this boolean indicate? Docs not clear
+}
 
-    // Enable channels
-    ESP_ERROR_CHECK(i2s_channel_enable(aux_handle));
+///// MAIN TASK ///// 
 
-    ESP_LOGW(TAG, "Channels initiated! Initializing FFT coefficients");
-    // Generate sin/cos coefficients for FFT calculations
-    ESP_ERROR_CHECK(dsps_fft2r_init_fc32(NULL, N_SAMPLES));
+void proc_audio_data(void* pvParameters)
+{
+    static const char *TAG = "dsp_loop";
 
-    // Generate Hann window coefficients
-    dsps_wind_hann_f32(hann_win, N_SAMPLES);
-
-    // Generate tone array
-    dsps_tone_gen_f32(tone_buffer, TONE_SAMPLE_LEN, TONE_AMPL, TONE_FREQ_SIN, 0);
-
-    // Set buffers to 0
-    memset(rx_FFT, 0.0, sizeof(rx_FFT));
-    memset(tx_iFFT, 0.0, sizeof(tx_iFFT));
+    // Instantiate pointers to TX buffers 
+    float txBuffer_overlap[TX_BUFFER_LEN];
+    int txBuffer[2 * TX_BUFFER_LEN];
 
     // Subscribe to watchdog timer (NULL->current task)
     esp_task_wdt_add(NULL);
+
+    // Write 0's to buffer, such that callback is effectively triggered
+    size_t bytes_written = 0;
+    ESP_ERROR_CHECK(i2s_channel_write(aux_handle, txBuffer, sizeof(txBuffer), &bytes_written, portMAX_DELAY));
     
     // Main loop
     unsigned int loop_count = 0;
     float fft_calc_time_sum = 0;
     while (1) {
-        size_t bytes_written = 0;
-        esp_err_t ret_val;
-
         unsigned int start_cc = dsp_get_cpu_cycle_count();
 
         // Copy values manually from tone buffer into FFT and rx_dbg arrays
@@ -185,11 +181,6 @@ void app_main(void)
         
         unsigned int end_cc = dsp_get_cpu_cycle_count();
 
-        ret_val = i2s_channel_write(aux_handle, txBuffer, TX_BUFFER_LEN, &bytes_written, portMAX_DELAY);
-        if (ret_val != ESP_OK || bytes_written != TX_BUFFER_LEN) {
-            ESP_LOGW(TAG, "Write failed! Err code %d, %d bytes written", (int)ret_val, bytes_written);
-        }
-
         // Calculate time spent, add to running sum
         fft_calc_time_sum += (float)(end_cc - start_cc) / 240e3;
         loop_count++;
@@ -221,8 +212,105 @@ void app_main(void)
             fft_calc_time_sum = 0;
         }
 
+        // Write to stream buffer
+        for (int i = 0; i < sizeof(txBuffer); i += STREAM_BUFFER_SIZE_B) {
+            bytes_written = xStreamBufferSend(xTxStreamBuffer, txBuffer + (i/4), STREAM_BUFFER_SIZE_B, 5000);
+            if (bytes_written != sizeof(txBuffer)) {
+                ESP_LOGE(TAG, "Failed to write all txBuffer data to stream buffer! %0d B out of %0d B",
+                        bytes_written, sizeof(txBuffer));
+            }
+        }
+
         // Reset watchdog timeout
         ESP_ERROR_CHECK(esp_task_wdt_reset());
+    }
+    
+}
+
+void app_main(void)
+{
+
+    static const char *TAG = "main";
+    
+    // Init channel
+    ESP_LOGI(TAG, "Initializing DAC I2S interface");
+    i2s_chan_config_t aux_chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_1, I2S_ROLE_MASTER);
+    i2s_new_channel(&aux_chan_cfg, &aux_handle, NULL);
+
+    // Initialize config
+    i2s_std_config_t aux_cfg = {
+        .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(I2S_SAMPLING_FREQ_HZ),
+        .slot_cfg = I2S_STD_MSB_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_STEREO),
+        .gpio_cfg = {
+            .mclk = I2S_GPIO_UNUSED,
+            .bclk = GPIO_NUM_17,
+            .ws   = GPIO_NUM_4,
+            .dout = GPIO_NUM_16,
+            .din  = I2S_GPIO_UNUSED,
+            .invert_flags = {
+                .mclk_inv = false,
+                .bclk_inv = false,
+                .ws_inv   = false,
+            }
+        }
+    };
+    ESP_ERROR_CHECK(i2s_channel_init_std_mode(aux_handle, &aux_cfg));
+
+    // Instantiate I2S callback
+    i2s_event_callbacks_t cbs = {
+        .on_recv = NULL,
+        .on_recv_q_ovf = NULL,
+        .on_sent = aux_tx_sent_callback,
+        .on_send_q_ovf = NULL, // May be necessary
+    };
+    ESP_ERROR_CHECK(i2s_channel_register_event_callback(aux_handle, &cbs, NULL));
+
+    // Enable channels
+    ESP_ERROR_CHECK(i2s_channel_enable(aux_handle));
+
+    ESP_LOGW(TAG, "Channel initiated!");
+
+    // Instantiate stream buffer
+    xTxStreamBuffer = xStreamBufferCreate(STREAM_BUFFER_SIZE_B, I2S_POP_SIZE_B);
+    ESP_LOGW(TAG, "Stream buffer instantiated!");
+
+    // Generate sin/cos coefficients for FFT calculations
+    ESP_ERROR_CHECK(dsps_fft2r_init_fc32(NULL, N_SAMPLES));
+
+    // Generate Hann window coefficients
+    dsps_wind_hann_f32(hann_win, N_SAMPLES);
+
+    // Generate tone array
+    dsps_tone_gen_f32(tone_buffer, TONE_SAMPLE_LEN, TONE_AMPL, TONE_FREQ_SIN, 0);
+
+    // Start main task
+    ESP_LOGW(TAG, "Starting DSP task...");
+    BaseType_t xReturned = xTaskCreate(
+        proc_audio_data, 
+        "Audio DSP",
+        DSP_TASK_STACK_SIZE,
+        NULL,
+        tskIDLE_PRIORITY, // Verify this priority, should be low
+        &xDSPTaskHandle
+    );
+    if ( xReturned != pdPASS )
+    {
+        ESP_LOGE(TAG, "Failed to create main task! Error: %d. Restarting ESP in 5 seconds...", xReturned);
+        vTaskDelete(xDSPTaskHandle);
+        vTaskDelay(5000 / portTICK_PERIOD_MS);
+        esp_restart();
+    }
+    else
+    {
+        ESP_LOGW(TAG, "Instantiated DSP task successfully!");
+    }
+    
+    // Main loop
+    ESP_LOGI(TAG, "Finished setup, entering main loop.");
+    while (1) {
+        // For now, just periodically delay
+        // DSP task and ISR's should handle the work
+        vTaskDelay(10000 / portTICK_PERIOD_MS);
     }
 
     // If this point is hit, wait some time then restart
