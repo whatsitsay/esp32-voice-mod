@@ -48,7 +48,9 @@
       "xutility": "c",
       "cstdlib": "c",
       "esp_task_wdt.h": "c",
-      "dsps_wind_hann.h": "c"
+      "dsps_wind_hann.h": "c",
+      "inttypes.h": "c",
+      "stream_buffer.h": "c"
     },
     "idf.espIdfPath": "${env:IDF_PATH}"
   }
