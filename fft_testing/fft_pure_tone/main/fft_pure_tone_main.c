@@ -26,7 +26,7 @@
 
 #define SAMPLES_PER_AVG (100)
 #define N_SAMPLES (4096)
-#define I2S_POP_SIZE (256) // Popped off in chunks to prevent staying in callback for too long
+#define I2S_POP_SIZE (TX_BUFFER_LEN) // Play around with size
 #define I2S_POP_SIZE_B (I2S_POP_SIZE * 4)
 #define TX_BUFFER_LEN (N_SAMPLES / 2) // Try bigger spec
 int N = N_SAMPLES;
@@ -48,7 +48,9 @@ float rx_tx_diff_pct[TX_BUFFER_LEN];
 // Stream handles
 i2s_chan_handle_t aux_handle;
 StreamBufferHandle_t xTxStreamBuffer;
-#define STREAM_BUFFER_SIZE_B (2 * TX_BUFFER_LEN * 4) // Will this be enough?
+StaticStreamBuffer_t xTxStreamBufferStruct;
+#define STREAM_BUFFER_SIZE_B (2 * TX_BUFFER_LEN * 4)
+uint8_t xTxStreamBuffer_storage[STREAM_BUFFER_SIZE_B + 1];
 // Task handles
 TaskHandle_t xDSPTaskHandle;
 #define DSP_TASK_STACK_SIZE (16384u) // Check watermark!
@@ -117,7 +119,7 @@ void proc_audio_data(void* pvParameters)
 
     // Instantiate pointers to TX buffers 
     float txBuffer_overlap[TX_BUFFER_LEN];
-    int txBuffer[2 * TX_BUFFER_LEN];
+    int txBuffer[TX_BUFFER_LEN * 2]; // L + R
 
     // Subscribe to watchdog timer (NULL->current task)
     esp_task_wdt_add(NULL);
@@ -213,12 +215,10 @@ void proc_audio_data(void* pvParameters)
         }
 
         // Write to stream buffer
-        for (int i = 0; i < sizeof(txBuffer); i += STREAM_BUFFER_SIZE_B) {
-            bytes_written = xStreamBufferSend(xTxStreamBuffer, txBuffer + (i/4), STREAM_BUFFER_SIZE_B, 5000);
-            if (bytes_written != sizeof(txBuffer)) {
-                ESP_LOGE(TAG, "Failed to write all txBuffer data to stream buffer! %0d B out of %0d B",
-                        bytes_written, sizeof(txBuffer));
-            }
+        bytes_written = xStreamBufferSend(xTxStreamBuffer, txBuffer, STREAM_BUFFER_SIZE_B, 5000);
+        if (bytes_written != STREAM_BUFFER_SIZE_B) {
+            ESP_LOGE(TAG, "Failed to write all txBuffer data to stream buffer! %0d B out of %0d B",
+                    bytes_written, STREAM_BUFFER_SIZE_B);
         }
 
         // Reset watchdog timeout
@@ -271,8 +271,12 @@ void app_main(void)
     ESP_LOGW(TAG, "Channel initiated!");
 
     // Instantiate stream buffer
-    xTxStreamBuffer = xStreamBufferCreate(STREAM_BUFFER_SIZE_B, I2S_POP_SIZE_B);
-    ESP_LOGW(TAG, "Stream buffer instantiated!");
+    xTxStreamBuffer = xStreamBufferCreateStatic(STREAM_BUFFER_SIZE_B, I2S_POP_SIZE_B, xTxStreamBuffer_storage, &xTxStreamBufferStruct);
+    if (xTxStreamBuffer == NULL) 
+    {
+        ESP_LOGE(TAG, "Failed to instantiate stream buffer!");
+    }
+    else ESP_LOGW(TAG, "Stream buffer instantiated!");
 
     // Generate sin/cos coefficients for FFT calculations
     ESP_ERROR_CHECK(dsps_fft2r_init_fc32(NULL, N_SAMPLES));
@@ -285,25 +289,25 @@ void app_main(void)
 
     // Start main task
     ESP_LOGW(TAG, "Starting DSP task...");
-    BaseType_t xReturned = xTaskCreate(
-        proc_audio_data, 
-        "Audio DSP",
-        DSP_TASK_STACK_SIZE,
-        NULL,
-        tskIDLE_PRIORITY, // Verify this priority, should be low
-        &xDSPTaskHandle
-    );
-    if ( xReturned != pdPASS )
-    {
-        ESP_LOGE(TAG, "Failed to create main task! Error: %d. Restarting ESP in 5 seconds...", xReturned);
-        vTaskDelete(xDSPTaskHandle);
-        vTaskDelay(5000 / portTICK_PERIOD_MS);
-        esp_restart();
-    }
-    else
-    {
-        ESP_LOGW(TAG, "Instantiated DSP task successfully!");
-    }
+    // BaseType_t xReturned = xTaskCreate(
+    //     proc_audio_data, 
+    //     "Audio DSP",
+    //     DSP_TASK_STACK_SIZE,
+    //     NULL,
+    //     tskIDLE_PRIORITY, // Verify this priority, should be low
+    //     &xDSPTaskHandle
+    // );
+    // if ( xReturned != pdPASS )
+    // {
+    //     ESP_LOGE(TAG, "Failed to create main task! Error: %d. Restarting ESP in 5 seconds...", xReturned);
+    //     vTaskDelete(xDSPTaskHandle);
+    //     vTaskDelay(5000 / portTICK_PERIOD_MS);
+    //     esp_restart();
+    // }
+    // else
+    // {
+    //     ESP_LOGW(TAG, "Instantiated DSP task successfully!");
+    // }
     
     // Main loop
     ESP_LOGI(TAG, "Finished setup, entering main loop.");
