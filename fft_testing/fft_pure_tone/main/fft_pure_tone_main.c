@@ -42,8 +42,6 @@ __attribute__((aligned(16))) float tx_iFFT[N_SAMPLES * 2];
 float tone_buffer[TONE_SAMPLE_LEN];
 float rx_dbg[TX_BUFFER_LEN];
 float tx_dbg[TX_BUFFER_LEN];
-float rx_tx_diff_raw[TX_BUFFER_LEN];
-float rx_tx_diff_pct[TX_BUFFER_LEN];
 
 // Stream handles
 i2s_chan_handle_t aux_handle;
@@ -196,11 +194,11 @@ void proc_audio_data(void* pvParameters)
             float avg_element_err_pct = 0;
             for (int i = 0; i < TX_BUFFER_LEN; i++)
             {
-                rx_tx_diff_raw[i] = tx_dbg[i] - rx_dbg[i];
-                rx_tx_diff_pct[i] = (rx_dbg[i] != 0) ? rx_tx_diff_raw[i] / fabsf(rx_dbg[i]) :
+                float rx_tx_diff_raw = tx_dbg[i] - rx_dbg[i];
+                float rx_tx_diff_pct = (rx_dbg[i] != 0) ? rx_tx_diff_raw / fabsf(rx_dbg[i]) :
                                     (tx_dbg[i] == 0) ? 0 : 1.0;
-                rx_tx_diff_pct[i] *= 100.0;
-                avg_element_err_pct += fabsf(rx_tx_diff_pct[i]);
+                rx_tx_diff_pct *= 100.0;
+                avg_element_err_pct += fabsf(rx_tx_diff_pct);
             }
             avg_element_err_pct /= TX_BUFFER_LEN;
             
@@ -289,25 +287,25 @@ void app_main(void)
 
     // Start main task
     ESP_LOGW(TAG, "Starting DSP task...");
-    // BaseType_t xReturned = xTaskCreate(
-    //     proc_audio_data, 
-    //     "Audio DSP",
-    //     DSP_TASK_STACK_SIZE,
-    //     NULL,
-    //     tskIDLE_PRIORITY, // Verify this priority, should be low
-    //     &xDSPTaskHandle
-    // );
-    // if ( xReturned != pdPASS )
-    // {
-    //     ESP_LOGE(TAG, "Failed to create main task! Error: %d. Restarting ESP in 5 seconds...", xReturned);
-    //     vTaskDelete(xDSPTaskHandle);
-    //     vTaskDelay(5000 / portTICK_PERIOD_MS);
-    //     esp_restart();
-    // }
-    // else
-    // {
-    //     ESP_LOGW(TAG, "Instantiated DSP task successfully!");
-    // }
+    BaseType_t xReturned = xTaskCreate(
+        proc_audio_data, 
+        "Audio DSP",
+        DSP_TASK_STACK_SIZE,
+        NULL,
+        tskIDLE_PRIORITY, // Verify this priority, should be low
+        &xDSPTaskHandle
+    );
+    if ( xReturned != pdPASS )
+    {
+        ESP_LOGE(TAG, "Failed to create main task! Error: %d. Restarting ESP in 5 seconds...", xReturned);
+        vTaskDelete(xDSPTaskHandle);
+        vTaskDelay(5000 / portTICK_PERIOD_MS);
+        esp_restart();
+    }
+    else
+    {
+        ESP_LOGW(TAG, "Instantiated DSP task successfully!");
+    }
     
     // Main loop
     ESP_LOGI(TAG, "Finished setup, entering main loop.");
