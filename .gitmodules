@@ -1,0 +1,3 @@
+[submodule "ESP32-ES8388"]
+	path = ESP32-ES8388
+	url = https://github.com/thaaraak/ESP32-ES8388.git
