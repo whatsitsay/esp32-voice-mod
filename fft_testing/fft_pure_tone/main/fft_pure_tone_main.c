@@ -16,6 +16,9 @@
 #include "driver/gpio.h"
 #include "esp_dsp.h"
 
+// Local libraries
+#include <es8388.h>
+
 // Local macros
 #define TONE_BITS (24)
 #define TONE_AMPL (powf(2, TONE_BITS - 1) * 0.75) // Less than max 
@@ -44,7 +47,7 @@ float rx_dbg[TX_BUFFER_LEN];
 float tx_dbg[TX_BUFFER_LEN];
 
 // Stream handles
-i2s_chan_handle_t aux_handle;
+i2s_chan_handle_t rx_handle, tx_handle;
 StreamBufferHandle_t xTxStreamBuffer;
 StaticStreamBuffer_t xTxStreamBufferStruct;
 #define STREAM_BUFFER_SIZE_B (2 * TX_BUFFER_LEN * 4)
@@ -124,7 +127,7 @@ void proc_audio_data(void* pvParameters)
 
     // Write 0's to buffer, such that callback is effectively triggered
     size_t bytes_written = 0;
-    ESP_ERROR_CHECK(i2s_channel_write(aux_handle, txBuffer, sizeof(txBuffer), &bytes_written, portMAX_DELAY));
+    ESP_ERROR_CHECK(i2s_channel_write(tx_handle, txBuffer, sizeof(txBuffer), &bytes_written, portMAX_DELAY));
     
     // Main loop
     unsigned int loop_count = 0;
@@ -230,29 +233,9 @@ void app_main(void)
 
     static const char *TAG = "main";
     
-    // Init channel
-    ESP_LOGI(TAG, "Initializing DAC I2S interface");
-    i2s_chan_config_t aux_chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_1, I2S_ROLE_MASTER);
-    i2s_new_channel(&aux_chan_cfg, &aux_handle, NULL);
-
-    // Initialize config
-    i2s_std_config_t aux_cfg = {
-        .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(I2S_SAMPLING_FREQ_HZ),
-        .slot_cfg = I2S_STD_MSB_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_STEREO),
-        .gpio_cfg = {
-            .mclk = I2S_GPIO_UNUSED,
-            .bclk = GPIO_NUM_17,
-            .ws   = GPIO_NUM_4,
-            .dout = GPIO_NUM_16,
-            .din  = I2S_GPIO_UNUSED,
-            .invert_flags = {
-                .mclk_inv = false,
-                .bclk_inv = false,
-                .ws_inv   = false,
-            }
-        }
-    };
-    ESP_ERROR_CHECK(i2s_channel_init_std_mode(aux_handle, &aux_cfg));
+    // Initiallize ES8388 and I2S channel
+    es8388_config();
+    es_i2s_init(&tx_handle, &rx_handle, I2S_SAMPLING_FREQ_HZ);
 
     // Instantiate I2S callback
     i2s_event_callbacks_t cbs = {
@@ -261,10 +244,10 @@ void app_main(void)
         .on_sent = aux_tx_sent_callback,
         .on_send_q_ovf = NULL, // May be necessary
     };
-    ESP_ERROR_CHECK(i2s_channel_register_event_callback(aux_handle, &cbs, NULL));
+    ESP_ERROR_CHECK(i2s_channel_register_event_callback(tx_handle, &cbs, NULL));
 
     // Enable channels
-    ESP_ERROR_CHECK(i2s_channel_enable(aux_handle));
+    ESP_ERROR_CHECK(i2s_channel_enable(tx_handle));
 
     ESP_LOGW(TAG, "Channel initiated!");
 
