@@ -1,3 +1,4 @@
+#include <string.h>
 #include "include/es8388.h"
 #include "include/codec_es8388.h"
 #include "freertos/FreeRTOS.h"
@@ -40,7 +41,7 @@ uint8_t es_i2c_write( uint8_t i2c_bus_addr, uint8_t reg, uint8_t value)
 uint8_t es_i2c_read( uint8_t i2c_bus_addr, uint8_t reg)
 {
 	   	uint8_t buffer[2];
-	    //printf( "Addr: [%d] Reading register: [%d]\n", i2c_bus_addr, reg );
+	    //ESP_LOGI(ES_TAG,  "Addr: [%d] Reading register: [%d]\n", i2c_bus_addr, reg );
 
 	    buffer[0] = reg;
 
@@ -60,7 +61,7 @@ uint8_t es_i2c_read( uint8_t i2c_bus_addr, uint8_t reg)
 	    ESP_ERROR_CHECK(i2c_master_cmd_begin( I2C_MASTER_NUM, cmd, 1000 / portTICK_PERIOD_MS));
 	    i2c_cmd_link_delete(cmd);
 
-	    //printf( "Read: [%02x]=[%02x]\n", reg, buffer[0] );
+	    //ESP_LOGI(ES_TAG,  "Read: [%02x]=[%02x]\n", reg, buffer[0] );
 
 	    return (buffer[0]);
 }
@@ -70,6 +71,7 @@ esp_err_t es_i2c_master_init(void)
 {
     int i2c_master_port = I2C_MASTER_NUM;
     i2c_config_t conf;
+    memset(&conf, 0, sizeof(i2c_config_t));
     conf.mode = I2C_MODE_MASTER;
     conf.sda_io_num = I2C_MASTER_SDA_IO;
     conf.sda_pullup_en = GPIO_PULLUP_ENABLE;
@@ -95,12 +97,12 @@ esp_err_t es_read_reg(uint8_t reg_add, uint8_t *p_data)
 
 void es8388_read_all()
 {
-	//printf( "\n\n===================\n\n");
+	//ESP_LOGI(ES_TAG,  "\n\n===================\n\n");
     for (int i = 0; i < 50; i++) {
         uint8_t reg = 0;
         es_read_reg(i, &reg);
     }
-	//printf( "\n\n===================\n\n");
+	//ESP_LOGI(ES_TAG,  "\n\n===================\n\n");
 }
 
 
@@ -149,13 +151,13 @@ esp_err_t es8388_init( es_dac_output_t output, es_adc_input_t input )
     res |= es_write_reg(ES8388_ADDR, ES8388_DACCONTROL23, 0x00);   //vroi=0
     res |= es8388_set_adc_dac_volume(ES_MODULE_DAC, 0, 0);          // 0db
 
-    ESP_LOGE(ES_TAG, "Setting DAC Output: %02x", output );
+    ESP_LOGW(ES_TAG, "Setting DAC Output: %02x", output );
     res |= es_write_reg(ES8388_ADDR, ES8388_DACPOWER, output );
     res |= es_write_reg(ES8388_ADDR, ES8388_ADCPOWER, 0xFF);
     res |= es_write_reg(ES8388_ADDR, ES8388_ADCCONTROL1, 0xbb); // MIC Left and Right channel PGA gain
 
 
-    ESP_LOGE(ES_TAG, "Setting ADC Input: %02x", input );
+    ESP_LOGW(ES_TAG, "Setting ADC Input: %02x", input );
     res |= es_write_reg(ES8388_ADDR, ES8388_ADCCONTROL2, input);
 
     res |= es_write_reg(ES8388_ADDR, ES8388_ADCCONTROL3, 0x02);
@@ -163,7 +165,7 @@ esp_err_t es8388_init( es_dac_output_t output, es_adc_input_t input )
     res |= es_write_reg(ES8388_ADDR, ES8388_ADCCONTROL5, 0x02);  //ADCFsMode,singel SPEED,RATIO=256
     //ALC for Microphone
     res |= es8388_set_adc_dac_volume(ES_MODULE_ADC, 0, 0);      // 0db
-    res |= es_write_reg(ES8388_ADDR, ES8388_ADCPOWER, 0x09); //Power on ADC, Enable LIN&RIN, Power off MICBIAS, set int1lp to low power mode
+    res |= es_write_reg(ES8388_ADDR, ES8388_ADCPOWER, 0x00); // Power up all bits, disable low-power mode
 
     return res;
 }
@@ -190,13 +192,13 @@ esp_err_t es8388_config_i2s( es_bits_length_t bits_length, es_module_t mode, es_
 
     // Set the Format
     if (mode == ES_MODULE_ADC || mode == ES_MODULE_ADC_DAC) {
-        printf( "Setting I2S ADC Format\n");
+        ESP_LOGW(ES_TAG,  "Setting I2S ADC Format\n");
         res = es_read_reg(ES8388_ADCCONTROL4, &reg);
         reg = reg & 0xfc;
         res |= es_write_reg(ES8388_ADDR, ES8388_ADCCONTROL4, reg | fmt);
     }
     if (mode == ES_MODULE_DAC || mode == ES_MODULE_ADC_DAC) {
-        printf( "Setting I2S DAC Format\n");
+        ESP_LOGW(ES_TAG,  "Setting I2S DAC Format\n");
         res = es_read_reg(ES8388_DACCONTROL1, &reg);
         reg = reg & 0xf9;
         res |= es_write_reg(ES8388_ADDR, ES8388_DACCONTROL1, reg | (fmt << 1));
@@ -206,13 +208,13 @@ esp_err_t es8388_config_i2s( es_bits_length_t bits_length, es_module_t mode, es_
     // Set the Sample bits length
     int bits = (int)bits_length;
     if (mode == ES_MODULE_ADC || mode == ES_MODULE_ADC_DAC) {
-        printf( "Setting I2S ADC Bits: %d\n", bits);
+        ESP_LOGW(ES_TAG,  "Setting I2S ADC Bits: %d\n", bits);
         res = es_read_reg(ES8388_ADCCONTROL4, &reg);
         reg = reg & 0xe3;
         res |=  es_write_reg(ES8388_ADDR, ES8388_ADCCONTROL4, reg | (bits << 2));
     }
     if (mode == ES_MODULE_DAC || mode == ES_MODULE_ADC_DAC) {
-        ESP_LOGE(ES_TAG, "Setting I2S DAC Bits: %d\n", bits);
+        ESP_LOGW(ES_TAG, "Setting I2S DAC Bits: %d\n", bits);
         res = es_read_reg(ES8388_DACCONTROL1, &reg);
         reg = reg & 0xc7;
         res |= es_write_reg(ES8388_ADDR, ES8388_DACCONTROL1, reg | (bits << 3));
@@ -246,7 +248,7 @@ esp_err_t es8388_start(es_module_t mode)
     }
     es_read_reg(ES8388_DACCONTROL21, &data);
     if (prev_data != data) {
-    	printf( "Resetting State Machine\n");
+    	ESP_LOGI(ES_TAG,  "Resetting State Machine\n");
 
         res |= es_write_reg(ES8388_ADDR, ES8388_CHIPPOWER, 0xF0);   //start state machine
         // res |= es_write_reg(ES8388_ADDR, ES8388_CONTROL1, 0x16);
@@ -254,11 +256,11 @@ esp_err_t es8388_start(es_module_t mode)
         res |= es_write_reg(ES8388_ADDR, ES8388_CHIPPOWER, 0x00);   //start state machine
     }
     if (mode == ES_MODULE_ADC || mode == ES_MODULE_ADC_DAC || mode == ES_MODULE_LINE) {
-    	printf( "Powering up ADC\n");
+    	ESP_LOGI(ES_TAG,  "Powering up ADC\n");
         res |= es_write_reg(ES8388_ADDR, ES8388_ADCPOWER, 0x00);   //power up adc and line in
     }
     if (mode == ES_MODULE_DAC || mode == ES_MODULE_ADC_DAC || mode == ES_MODULE_LINE) {
-    	printf( "Powering up DAC\n");
+    	ESP_LOGI(ES_TAG,  "Powering up DAC\n");
         res |= es_write_reg(ES8388_ADDR, ES8388_DACPOWER, 0x3c);   //power up dac and line out
         res |= es8388_set_voice_mute(false);
     }
@@ -298,7 +300,7 @@ void es8388_config()
 	//es_dac_output_t output = DAC_OUTPUT_LOUT2  | DAC_OUTPUT_ROUT2;
 
     //es_dac_output_t output = 0;
-	es_adc_input_t input = ADC_INPUT_LINPUT1_RINPUT1;
+	es_adc_input_t input = ADC_INPUT_LINPUT2_RINPUT2 | ADC_INPUT_MIC1 | ADC_INPUT_MIC2;
 
 
     es8388_init( output, input );

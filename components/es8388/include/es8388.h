@@ -18,13 +18,10 @@
 #include "driver/i2s_std.h"
 #include "driver/gpio.h"
 
-#define I2C_MASTER_NUM	0
 #define ACK_CHECK_EN 0x1
 #define ACK_CHECK_DIS 0x0
 #define ACK_VAL I2C_MASTER_ACK
 #define NACK_VAL I2C_MASTER_NACK
-
-#define ES8388_ADDR (0x10)
 
 #define VOL_DEFAULT (90)
 
@@ -38,8 +35,10 @@
 #define ES_I2S_DI_IO     (GPIO_NUM_35)
 #define ES_I2S_MCLK_PIN	(GPIO_NUM_0)
 
+#define I2C_MASTER_NUM (I2C_NUM_0)
 #define I2C_MASTER_SDA_IO (GPIO_NUM_33)
 #define I2C_MASTER_SCL_IO (GPIO_NUM_32)
+#define ES8388_ADDR (0x10)
 
 #define HEADPHONE_DETECT_GPIO (GPIO_NUM_39)
 #define POWER_AMP_EN_GPIO (GPIO_NUM_21)
