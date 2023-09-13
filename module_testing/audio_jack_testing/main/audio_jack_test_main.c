@@ -13,6 +13,8 @@
 #include "driver/gpio.h"
 #include "driver/i2s_std.h"
 
+#include <es8388.h>
+
 #define AUX_CLK_FREQ_HZ (44000)
 #define WAVE_FREQ (440) // Concert A
 #define SAMPLES_PER_CYCLE (AUX_CLK_FREQ_HZ / WAVE_FREQ)
@@ -23,29 +25,10 @@ void app_main(void)
 {
     printf("Initializing DAC I2S interface\n");
     
-    i2s_chan_handle_t aux_handle;
-    // Init channel
-    i2s_chan_config_t aux_chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_AUTO, I2S_ROLE_MASTER);
-    i2s_new_channel(&aux_chan_cfg, &aux_handle, NULL);
+    i2s_chan_handle_t aux_handle, rx_handle;
 
-    // Initialize config
-    i2s_std_config_t std_cfg = {
-        .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(AUX_CLK_FREQ_HZ),
-        .slot_cfg = I2S_STD_MSB_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_STEREO),
-        .gpio_cfg = {
-            .mclk = I2S_GPIO_UNUSED,
-            .bclk = GPIO_NUM_17,
-            .ws   = GPIO_NUM_4,
-            .dout = GPIO_NUM_16,
-            .din  = I2S_GPIO_UNUSED,
-            .invert_flags = {
-                .mclk_inv = false,
-                .bclk_inv = false,
-                .ws_inv   = false,
-            }
-        }
-    };
-    ESP_ERROR_CHECK(i2s_channel_init_std_mode(aux_handle, &std_cfg));
+    es8388_config();
+    es_i2s_init(&aux_handle, &rx_handle, AUX_CLK_FREQ_HZ);
 
     // Enable aux TX channel
     ESP_ERROR_CHECK(i2s_channel_enable(aux_handle));

@@ -14,6 +14,9 @@
     },
     {
       "path": "../module_testing/audio_jack_testing"
+    },
+    {
+      "path": "../components"
     }
   ],
   "settings": {
