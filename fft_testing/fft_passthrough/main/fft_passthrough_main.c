@@ -34,8 +34,6 @@ int N = N_SAMPLES;
 // I2S macros
 #define I2S_SAMPLING_FREQ_HZ (40960) // Lower for more even freq resolution
 #define I2S_DOWNSHIFT (8) // 24-bit precision, can downshift safely by byte for FFT calcs
-#define I2S_POP_SIZE (RX_TX_BUFFER_LEN) // Smaller to allow tasks to trade off
-#define I2S_POP_SIZE_B (I2S_POP_SIZE * 4)
 
 // FFT buffers
 __attribute__((aligned(16))) float hann_win[N_SAMPLES];
@@ -60,6 +58,9 @@ static float rxBuffer_overlap[RX_TX_BUFFER_LEN];
 i2s_chan_handle_t rx_handle, tx_handle;
 StreamBufferHandle_t xRxStreamBuffer, xTxStreamBuffer;
 #define STREAM_BUFFER_SIZE_B (3 * RX_TX_BUFFER_LEN * 4) // Slightly bigger for some overflow
+#define RX_READ_SIZE_B (2 * RX_TX_BUFFER_LEN * 4) // == length of rx/tx buffers
+#define TX_POP_SIZE (RX_TX_BUFFER_LEN / 2) // Smaller to allow tasks to trade off
+#define TX_POP_SIZE_B (TX_POP_SIZE * 4)
 
 // Task handles
 static TaskHandle_t xDSPTaskHandle, xRxTaskHandle, xTxTaskHandle;
@@ -132,7 +133,7 @@ void print_task_stats()
     }
     avg_element_err_pct /= RX_TX_BUFFER_LEN;
     
-    ESP_LOGW(TAG, "Running average FFT/iFFT calc time: %.4f ms, avg error: %.2f %%",
+    ESP_LOGI(TAG, "Running average FFT/iFFT calc time: %.4f ms, avg error: %.2f %%",
         fft_calc_time_avg, avg_element_err_pct);
 
     // Clear sum and count
@@ -292,17 +293,17 @@ void proc_audio_data(void* pvParameters)
 
 void i2s_receive(void* pvParameters)
 {
-    size_t data_received, data_pushed = 0;
     static const char *TAG = "I2S receive";
-    int* stream_data = (int *)malloc(I2S_POP_SIZE_B);
+    int* stream_data = (int *)malloc(RX_READ_SIZE_B);
 
     while (1) {
+        size_t data_received, data_pushed = 0;
         // Wait for task notification from callback
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
         // Read from I2S buffer
-        ESP_ERROR_CHECK(i2s_channel_read(rx_handle, stream_data, I2S_POP_SIZE_B, &data_received, 5000));
-        if (data_received != I2S_POP_SIZE_B) {
+        ESP_ERROR_CHECK(i2s_channel_read(rx_handle, stream_data, RX_READ_SIZE_B, &data_received, 5000 / portTICK_PERIOD_MS));
+        if (data_received != RX_READ_SIZE_B) {
             ESP_LOGE(TAG, "Only read %d out of %d bytes from I2S buffer", data_received, data_pushed);
             if (data_received == 0) continue;
         }
@@ -320,13 +321,13 @@ void i2s_transmit(void* pvParameters)
 {
     size_t data_popped, data_written;
     static const char *TAG = "I2S transmit";
-    int* stream_data = (int *)malloc(I2S_POP_SIZE_B);
+    int* stream_data = (int *)malloc(TX_POP_SIZE_B);
 
     while (1) {
         // Pop data from stream
-        data_popped = xStreamBufferReceive(xTxStreamBuffer, stream_data, I2S_POP_SIZE_B, portMAX_DELAY);
-        if (data_popped != I2S_POP_SIZE_B) {
-            ESP_LOGW(TAG, "Only popped %d out of %d bytes from stream", data_popped, I2S_POP_SIZE_B);
+        data_popped = xStreamBufferReceive(xTxStreamBuffer, stream_data, TX_POP_SIZE_B, portMAX_DELAY);
+        if (data_popped != TX_POP_SIZE_B) {
+            ESP_LOGW(TAG, "Only popped %d out of %d bytes from stream", data_popped, TX_POP_SIZE_B);
             if (data_popped == 0) continue;
         }
 
@@ -355,8 +356,8 @@ void app_main(void)
 
     ESP_LOGW(TAG, "Channels initiated!");
     // Instantiate stream buffers
-    xRxStreamBuffer = xStreamBufferCreate(STREAM_BUFFER_SIZE_B, sizeof(rxBuffer));
-    xTxStreamBuffer = xStreamBufferCreate(STREAM_BUFFER_SIZE_B, I2S_POP_SIZE_B);
+    xRxStreamBuffer = xStreamBufferCreate(STREAM_BUFFER_SIZE_B, RX_READ_SIZE_B);
+    xTxStreamBuffer = xStreamBufferCreate(STREAM_BUFFER_SIZE_B, TX_POP_SIZE_B);
     if (xRxStreamBuffer == NULL || xTxStreamBuffer == NULL) 
     {
         ESP_LOGE(TAG, "Failed to instantiate stream buffers!");
