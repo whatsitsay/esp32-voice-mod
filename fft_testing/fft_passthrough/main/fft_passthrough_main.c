@@ -71,6 +71,10 @@ static TaskHandle_t xDSPTaskHandle, xRxTaskHandle, xTxTaskHandle;
 #define TX_TASK_STACK_SIZE (4096u) // Check watermark!
 #define TX_TASK_CORE (1)
 
+#define DSP_TASK_PRIORITY (1U) // Just above idle
+#define RX_TASK_PRIORITY (2U) // Higher due to it being blocked
+#define TX_TASK_PRIORITY (3U) // Higher still since it will spend the most time blocked
+
 static SemaphoreHandle_t xRxBufferMutex, xTxBufferMutex;
 
 ////// HELPER FUNCTIONS //////
@@ -382,7 +386,7 @@ void app_main(void)
         "I2S Receive Task",
         RX_TASK_STACK_SIZE,
         NULL,
-        10, // Can be higher, since it should spend most time blocked
+        RX_TASK_PRIORITY,
         &xRxTaskHandle,
         RX_TASK_CORE
     );
@@ -400,7 +404,7 @@ void app_main(void)
         "I2S Transmit Task",
         TX_TASK_STACK_SIZE,
         NULL,
-        10, // Can be higher, since it should spend most time blocked
+        TX_TASK_PRIORITY,
         &xTxTaskHandle,
         TX_TASK_CORE
     );
@@ -430,7 +434,7 @@ void app_main(void)
         "Audio DSP",
         DSP_TASK_STACK_SIZE,
         NULL,
-        tskIDLE_PRIORITY + 1, // Verify this priority, should be low
+        DSP_TASK_PRIORITY, // Verify this priority, should be low
         &xDSPTaskHandle,
         DSP_TASK_CORE
     );
