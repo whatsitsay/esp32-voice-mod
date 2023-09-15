@@ -150,6 +150,31 @@ void print_task_stats()
     xSemaphoreGive(xTxBufferMutex);
 }
 
+void audio_passthrough() {
+    static const char* TAG = "Audio Passthrough";
+
+    if (xSemaphoreTake(xRxBufferMutex, 500 / portTICK_PERIOD_MS) != pdTRUE) {
+        ESP_LOGE(TAG, "Failed to get mutex for RX debug buffer!");
+    }
+    if (xSemaphoreTake(xTxBufferMutex, 500 / portTICK_PERIOD_MS) != pdTRUE) {
+        ESP_LOGE(TAG, "Failed to get mutex for RX debug buffer!");
+    }
+
+    // Copy buffer directly
+    for (int i = 0; i < RX_TX_BUFFER_LEN; i++)
+    {
+        txBuffer[2 * i] = rxBuffer[2 * i];
+        txBuffer[2 * i + 1] = rxBuffer[2 * i];
+
+        rx_dbg[i] = rxBuffer[2 * i];
+        tx_dbg[i] = txBuffer[2 * i];
+    }
+
+    // Release semaphores
+    xSemaphoreGive(xRxBufferMutex);
+    xSemaphoreGive(xTxBufferMutex);
+}
+
 /**
  * Function for performing audio data modification
  * 
@@ -281,6 +306,7 @@ void proc_audio_data(void* pvParameters)
         }
 
         // Modify data
+        // audio_passthrough(); // FIXME for debug
         audio_data_modification();
 
         // Write to stream buffer
