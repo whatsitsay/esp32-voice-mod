@@ -160,7 +160,7 @@ esp_err_t es8388_init( es_dac_output_t output, es_adc_input_t input )
     ESP_LOGW(ES_TAG, "Setting ADC Input: %02x", input );
     res |= es_write_reg(ES8388_ADDR, ES8388_ADCCONTROL2, input);
 
-    res |= es_write_reg(ES8388_ADDR, ES8388_ADCCONTROL3, 0x02);
+    res |= es_write_reg(ES8388_ADDR, ES8388_ADCCONTROL3, 0x08); // Mono-mix to ADC left
     res |= es_write_reg(ES8388_ADDR, ES8388_ADCCONTROL4, 0x0d); // Left/Right data, Left/Right justified mode, Bits length, I2S format
     res |= es_write_reg(ES8388_ADDR, ES8388_ADCCONTROL5, 0x02);  //ADCFsMode,singel SPEED,RATIO=256
     //ALC for Microphone
@@ -333,7 +333,8 @@ esp_err_t es_toggle_power_amp()
 {
     // FIXME This should really be in some sort of Audio Kit lib, not here
     // should do for now however
-    bool headphone_detect = !gpio_get_level(HEADPHONE_DETECT_GPIO);
+    // bool headphone_detect = !gpio_get_level(HEADPHONE_DETECT_GPIO);
+    bool headphone_detect = true; // REMOVE ME just for prototyping without speaker
     // Power amp should be set opposite to headphone detect
     gpio_set_level(POWER_AMP_EN_GPIO, (int)(!headphone_detect));
 
