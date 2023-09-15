@@ -344,6 +344,7 @@ esp_err_t es_toggle_power_amp()
 void es_i2s_init(i2s_chan_handle_t* tx_handle, i2s_chan_handle_t* rx_handle, int i2s_sample_rate)
 {
     i2s_chan_config_t i2s_chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_AUTO, I2S_ROLE_MASTER);
+    i2s_chan_cfg.dma_frame_num = 511; // Same as buffer length?
     i2s_new_channel(&i2s_chan_cfg, tx_handle, rx_handle);
 
     i2s_std_config_t std_cfg = {

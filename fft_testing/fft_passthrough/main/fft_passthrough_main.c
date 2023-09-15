@@ -57,10 +57,9 @@ static float rxBuffer_overlap[RX_TX_BUFFER_LEN];
 // Stream handles
 i2s_chan_handle_t rx_handle, tx_handle;
 StreamBufferHandle_t xRxStreamBuffer, xTxStreamBuffer;
-#define STREAM_BUFFER_SIZE_B (3 * RX_TX_BUFFER_LEN * 4) // Slightly bigger for some overflow
 #define RX_READ_SIZE_B (2 * RX_TX_BUFFER_LEN * 4) // == length of rx/tx buffers
-#define TX_POP_SIZE (RX_TX_BUFFER_LEN / 2) // Smaller to allow tasks to trade off
-#define TX_POP_SIZE_B (TX_POP_SIZE * 4)
+#define STREAM_BUFFER_SIZE_B (3 * RX_READ_SIZE_B / 2) // Bigger for some overflow
+#define TX_POP_SIZE_B (1024)
 
 // Task handles
 static TaskHandle_t xDSPTaskHandle, xRxTaskHandle, xTxTaskHandle;
@@ -70,6 +69,9 @@ static TaskHandle_t xDSPTaskHandle, xRxTaskHandle, xTxTaskHandle;
 #define RX_TASK_CORE (1)
 #define TX_TASK_STACK_SIZE (4096u) // Check watermark!
 #define TX_TASK_CORE (1)
+
+#define DSP_DONE_OFFSET (0)
+#define TX_DONE_OFFSET  (1)
 
 #define DSP_TASK_PRIORITY (1U) // Just above idle
 #define RX_TASK_PRIORITY (2U) // Higher due to it being blocked
@@ -153,6 +155,8 @@ void print_task_stats()
 void audio_passthrough() {
     static const char* TAG = "Audio Passthrough";
 
+    unsigned int start_cc = dsp_get_cpu_cycle_count();
+
     if (xSemaphoreTake(xRxBufferMutex, 500 / portTICK_PERIOD_MS) != pdTRUE) {
         ESP_LOGE(TAG, "Failed to get mutex for RX debug buffer!");
     }
@@ -173,6 +177,12 @@ void audio_passthrough() {
     // Release semaphores
     xSemaphoreGive(xRxBufferMutex);
     xSemaphoreGive(xTxBufferMutex);
+    
+    unsigned int end_cc = dsp_get_cpu_cycle_count();
+
+    // Calculate time spent, add to running sum
+    fft_calc_time_sum += (float)(end_cc - start_cc) / 240e3;
+    loop_count++;
 }
 
 /**
@@ -279,6 +289,20 @@ static IRAM_ATTR bool tx_sent_callback(i2s_chan_handle_t handle, i2s_event_data_
     return false; // FIXME what does this boolean indicate? Docs not clear
 }
 
+static IRAM_ATTR bool i2s_rx_overflow(i2s_chan_handle_t handle, i2s_event_data_t *event, void *user_ctx)
+{
+    // configASSERT( false ); // Fail immediately (for now)
+    
+    return false;
+}
+
+static IRAM_ATTR bool i2s_tx_overflow(i2s_chan_handle_t handle, i2s_event_data_t *event, void *user_ctx)
+{
+    // configASSERT( false ); // Fail immediately (for now)
+    
+    return false;
+}
+
 ///// TASKS ///// 
 
 void proc_audio_data(void* pvParameters)
@@ -325,16 +349,24 @@ void proc_audio_data(void* pvParameters)
 void i2s_receive(void* pvParameters)
 {
     static const char *TAG = "I2S receive";
-    int* stream_data = (int *)malloc(RX_READ_SIZE_B);
+    int* stream_data = (int *)malloc(TX_POP_SIZE_B);
+
+    configASSERT( stream_data != NULL );
+
+    configASSERT( rx_handle != NULL );
+
+    // Enable RX channel
+    ESP_ERROR_CHECK(i2s_channel_enable(rx_handle));
 
     while (1) {
         size_t data_received, data_pushed = 0;
-        // Wait for task notification from callback
+
+        // Wait for task notification from callback before starting to read data
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
         // Read from I2S buffer
-        ESP_ERROR_CHECK(i2s_channel_read(rx_handle, stream_data, RX_READ_SIZE_B, &data_received, 5000 / portTICK_PERIOD_MS));
-        if (data_received != RX_READ_SIZE_B) {
+        ESP_ERROR_CHECK(i2s_channel_read(rx_handle, stream_data, TX_POP_SIZE_B, &data_received, 1000));
+        if (data_received != TX_POP_SIZE_B) {
             ESP_LOGE(TAG, "Only read %d out of %d bytes from I2S buffer", data_received, data_pushed);
             if (data_received == 0) continue;
         }
@@ -350,13 +382,20 @@ void i2s_receive(void* pvParameters)
 
 void i2s_transmit(void* pvParameters)
 {
-    size_t data_popped, data_written;
     static const char *TAG = "I2S transmit";
     int* stream_data = (int *)malloc(TX_POP_SIZE_B);
 
+    configASSERT( stream_data != NULL );
+
+    configASSERT( tx_handle != NULL );
+    
+    // Enable TX channel
+    ESP_ERROR_CHECK(i2s_channel_enable(tx_handle));
+
     while (1) {
+        size_t data_popped = 0, data_written = 0;
         // Pop data from stream
-        data_popped = xStreamBufferReceive(xTxStreamBuffer, stream_data, TX_POP_SIZE_B, portMAX_DELAY);
+        data_popped = xStreamBufferReceive(xTxStreamBuffer, stream_data, TX_POP_SIZE_B, 1000);
         if (data_popped != TX_POP_SIZE_B) {
             ESP_LOGW(TAG, "Only popped %d out of %d bytes from stream", data_popped, TX_POP_SIZE_B);
             if (data_popped == 0) continue;
@@ -379,7 +418,7 @@ void i2s_transmit(void* pvParameters)
 void app_main(void)
 {
     static const char *TAG = "main";
-    BaseType_t xReturned;
+    BaseType_t xReturned = 0UL;
     
     // Initiallize ES8388 and I2S channel
     es8388_config();
@@ -388,7 +427,7 @@ void app_main(void)
     ESP_LOGW(TAG, "Channels initiated!");
     // Instantiate stream buffers
     xRxStreamBuffer = xStreamBufferCreate(STREAM_BUFFER_SIZE_B, RX_READ_SIZE_B);
-    xTxStreamBuffer = xStreamBufferCreate(STREAM_BUFFER_SIZE_B, TX_POP_SIZE_B);
+    xTxStreamBuffer = xStreamBufferCreate(STREAM_BUFFER_SIZE_B, TX_POP_SIZE_B); // A little lower to ensure data will be popped as soon as it's ready
     if (xRxStreamBuffer == NULL || xTxStreamBuffer == NULL) 
     {
         ESP_LOGE(TAG, "Failed to instantiate stream buffers!");
@@ -405,57 +444,19 @@ void app_main(void)
     xRxBufferMutex = xSemaphoreCreateMutex();
     xTxBufferMutex = xSemaphoreCreateMutex();
 
-    // Start RX/TX buffer tasks
-    ESP_LOGW(TAG, "Starting RX task...");
-    xReturned = xTaskCreatePinnedToCore(
-        i2s_receive, 
-        "I2S Receive Task",
-        RX_TASK_STACK_SIZE,
-        NULL,
-        RX_TASK_PRIORITY,
-        &xRxTaskHandle,
-        RX_TASK_CORE
-    );
-    if ( xReturned != pdPASS )
-    {
-        ESP_LOGE(TAG, "Failed to create RX task! Error: %d.", xReturned);
-    }
-    else
-    {
-        ESP_LOGW(TAG, "Instantiated RX task successfully!");
-    }
-    ESP_LOGW(TAG, "Starting TX task...");
-    xReturned = xTaskCreatePinnedToCore(
-        i2s_transmit, 
-        "I2S Transmit Task",
-        TX_TASK_STACK_SIZE,
-        NULL,
-        TX_TASK_PRIORITY,
-        &xTxTaskHandle,
-        TX_TASK_CORE
-    );
-    if ( xReturned != pdPASS )
-    {
-        ESP_LOGE(TAG, "Failed to create TX task! Error: %d.", xReturned);
-    }
-    else
-    {
-        ESP_LOGW(TAG, "Instantiated RX task successfully!");
-    }
-
     // Instantiate I2S callbacks
     i2s_event_callbacks_t cbs = {
         .on_recv = rx_rcvd_callback,
-        .on_recv_q_ovf = NULL,
+        .on_recv_q_ovf = i2s_rx_overflow,
         .on_sent = tx_sent_callback,
-        .on_send_q_ovf = NULL, // May be necessary
+        .on_send_q_ovf = i2s_tx_overflow,
     };
     ESP_ERROR_CHECK(i2s_channel_register_event_callback(rx_handle, &cbs, NULL));
     ESP_ERROR_CHECK(i2s_channel_register_event_callback(tx_handle, &cbs, NULL));
 
     // Start DSP task
     ESP_LOGW(TAG, "Starting DSP task...");
-    xReturned = xTaskCreatePinnedToCore(
+    xReturned |= xTaskCreatePinnedToCore(
         proc_audio_data, 
         "Audio DSP",
         DSP_TASK_STACK_SIZE,
@@ -464,21 +465,38 @@ void app_main(void)
         &xDSPTaskHandle,
         DSP_TASK_CORE
     );
+
+    // Start RX/TX buffer tasks
+
+    ESP_LOGW(TAG, "Starting RX task..."); // Last to only start popping data when ready
+    xReturned |= xTaskCreatePinnedToCore(
+        i2s_receive, 
+        "I2S Receive Task",
+        RX_TASK_STACK_SIZE,
+        NULL,
+        RX_TASK_PRIORITY,
+        &xRxTaskHandle,
+        RX_TASK_CORE
+    );
+
+    ESP_LOGW(TAG, "Starting TX task...");
+    xReturned |= xTaskCreatePinnedToCore(
+        i2s_transmit, 
+        "I2S Transmit Task",
+        TX_TASK_STACK_SIZE,
+        NULL,
+        TX_TASK_PRIORITY,
+        &xTxTaskHandle,
+        TX_TASK_CORE
+    );
+
     if ( xReturned != pdPASS )
     {
-        ESP_LOGE(TAG, "Failed to create DSP task! Error: %d. Restarting ESP in 5 seconds...", xReturned);
+        ESP_LOGE(TAG, "Failed to create tasks! Error: %d. Restarting ESP in 5 seconds...", xReturned);
         vTaskDelete(xDSPTaskHandle);
         vTaskDelay(5000 / portTICK_PERIOD_MS);
         esp_restart();
     }
-    else
-    {
-        ESP_LOGW(TAG, "Instantiated DSP task successfully!");
-    }
-
-    // Enable channels
-    ESP_ERROR_CHECK(i2s_channel_enable(rx_handle));
-    ESP_ERROR_CHECK(i2s_channel_enable(tx_handle));
     
     // Main loop
     ESP_LOGI(TAG, "Finished setup, entering main loop.");
