@@ -96,10 +96,11 @@ esp_err_t inv_fft(float* fft_arr, int num_samples)
     for (int i = 0; i < num_samples; i++)
     {
         fft_arr[2 * i] /= (float)num_samples; // Correction factor
-        fft_arr[2 * i] *= hann_win[i]; // For proper reconstruction
+        // fft_arr[2 * i] *= hann_win[i]; // For proper reconstruction
         // Conjugate of imaginary component (should be close to 0)
         fft_arr[2 * i + 1] /= (float)num_samples;
-        fft_arr[2 * i + 1] *= -1 * hann_win[i]; // Less necessary
+        fft_arr[2 * i + 1] *= -1; // Complex conjugate
+        // fft_arr[2 * i + 1] *= hann_win[i]; // Proper reconstruction (less necessary)
     }
 
     return ESP_OK;
@@ -209,7 +210,7 @@ void audio_data_modification() {
         txBuffer[2 * i + 1] = txBuffer[2 * i]; // Copy L and R
 
         // Store TX val to debug array for later comparison
-        tx_dbg[i] = txBuffer_overlap[i] + tx_val;
+        tx_dbg[i] = (txBuffer_overlap[i] + tx_val) * 256;
 
         // Store latter portion for use next loop
         float tx_overlap_val = tx_iFFT[2 * (i + RX_TX_BUFFER_LEN)];
