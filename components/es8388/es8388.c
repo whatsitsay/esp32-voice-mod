@@ -141,9 +141,10 @@ esp_err_t es8388_init( es_dac_output_t output, es_adc_input_t input )
     res |= es_write_reg(ES8388_ADDR, ES8388_MASTERMODE, ES_MODE_SLAVE ); //CODEC IN I2S SLAVE MODE
 
     res |= es_write_reg(ES8388_ADDR, ES8388_DACPOWER, 0xC0);  //disable DAC and disable Lout/Rout/1/2
-    res |= es_write_reg(ES8388_ADDR, ES8388_CONTROL1, 0x12);  //Enfr=0,Play&Record Mode,(0x17-both of mic&paly)
-    res |= es_write_reg(ES8388_ADDR, ES8388_DACCONTROL1, 0x18);//1a 0x18:16bit iis , 0x00:24
+    res |= es_write_reg(ES8388_ADDR, ES8388_CONTROL1, 0x32);  //SameFs, Enfr=0,Play&Record Mode,(0x17-both of mic&paly)
+    res |= es_write_reg(ES8388_ADDR, ES8388_DACCONTROL1, 0x20); // 32-bit audio
     res |= es_write_reg(ES8388_ADDR, ES8388_DACCONTROL2, 0x02);  //DACFsMode,SINGLE SPEED; DACFsRatio,256
+    res |= es_write_reg(ES8388_ADDR, ES8388_DACCONTROL6, 0x08);  // Clickfree disable
     res |= es_write_reg(ES8388_ADDR, ES8388_DACCONTROL16, 0x00); // 0x00 audio on LIN1&RIN1,  0x09 LIN2&RIN2
     res |= es_write_reg(ES8388_ADDR, ES8388_DACCONTROL17, 0x90); // only left DAC to left mixer enable 0db
     res |= es_write_reg(ES8388_ADDR, ES8388_DACCONTROL20, 0x90); // only right DAC to right mixer enable 0db
@@ -161,7 +162,7 @@ esp_err_t es8388_init( es_dac_output_t output, es_adc_input_t input )
     res |= es_write_reg(ES8388_ADDR, ES8388_ADCCONTROL2, input);
 
     res |= es_write_reg(ES8388_ADDR, ES8388_ADCCONTROL3, 0x08); // Mono-mix to ADC left
-    res |= es_write_reg(ES8388_ADDR, ES8388_ADCCONTROL4, 0x0d); // Left/Right data, Left/Right justified mode, Bits length, I2S format
+    res |= es_write_reg(ES8388_ADDR, ES8388_ADCCONTROL4, 0b10); // 32-bit audio
     res |= es_write_reg(ES8388_ADDR, ES8388_ADCCONTROL5, 0x02);  //ADCFsMode,singel SPEED,RATIO=256
     //ALC for Microphone
     res |= es8388_set_adc_dac_volume(ES_MODULE_ADC, 0, 0);      // 0db
@@ -344,6 +345,7 @@ esp_err_t es_toggle_power_amp()
 void es_i2s_init(i2s_chan_handle_t* tx_handle, i2s_chan_handle_t* rx_handle, int i2s_sample_rate)
 {
     i2s_chan_config_t i2s_chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_AUTO, I2S_ROLE_MASTER);
+    i2s_chan_cfg.dma_desc_num  = 3;
     i2s_chan_cfg.dma_frame_num = 511; // Same as buffer length?
     i2s_new_channel(&i2s_chan_cfg, tx_handle, rx_handle);
 

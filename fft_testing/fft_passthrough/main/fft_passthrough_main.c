@@ -1,3 +1,4 @@
+
 /*
  * Microphone test for INMP441 breakout board
  */
@@ -11,7 +12,8 @@
 #include "esp_task_wdt.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "freertos/stream_buffer.h"
+#include "freertos/semphr.h"
+#include "freertos/event_groups.h"
 #include "driver/i2s_std.h"
 #include "driver/gpio.h"
 #include "esp_dsp.h"
@@ -19,17 +21,12 @@
 // Local libraries
 #include <es8388.h>
 
-// Allocate buffer
-#define SAMPLES_PER_AVG (100)
-#define BYTES_PER_SAMPLE (4) // According to spec, 32bits/word
+// Number of samples
 #define N_SAMPLES (4096)
-#define RX_TX_BUFFER_LEN (N_SAMPLES / 2) // Try bigger spec
+#define HOP_SIZE (N_SAMPLES / 2) // Overlap 50%
+#define HOP_BUFFER_SIZE_B (2 * HOP_SIZE * 4) // == length of rx/tx buffers (bytes)
 // rx/tx buffers. Size doubled for L+R (even if only R is used)
 int N = N_SAMPLES;
-
-// Plot macros
-#define PLOT_LEN (RX_TX_BUFFER_LEN / 8)
-#define PLOT_MAX (powf(2, 24))
 
 // I2S macros
 #define I2S_SAMPLING_FREQ_HZ (40960) // Lower for more even freq resolution
@@ -40,44 +37,59 @@ __attribute__((aligned(16))) float hann_win[N_SAMPLES];
 __attribute__((aligned(16))) float rx_FFT[N_SAMPLES * 2]; // Will be complex
 __attribute__((aligned(16))) float tx_iFFT[N_SAMPLES * 2];
 
-// Instantiate pointers to debug buffers
-float rx_dbg[RX_TX_BUFFER_LEN];
-float tx_dbg[RX_TX_BUFFER_LEN];
-
-// Avg sum values
+// Stats trackers
 static unsigned int loop_count = 0;
 static float fft_calc_time_sum = 0;
+static unsigned int rx_ovfl_hit = 0;
+static unsigned int tx_ovfl_hit = 0;
 
-// Instantiate pointers to RX/TX buffers 
-static int txBuffer[RX_TX_BUFFER_LEN * 2]; // L + R
-static float txBuffer_overlap[RX_TX_BUFFER_LEN];
-static int rxBuffer[RX_TX_BUFFER_LEN * 2]; // L + R
-static float rxBuffer_overlap[RX_TX_BUFFER_LEN];
+// Ping-pong buffers
+#define NUM_BUFFERS (2)
+int* txBuffers[NUM_BUFFERS];
+int* rxBuffers[NUM_BUFFERS];
+int i2s_idx, dsp_idx; // I2S idx should be the same between TX/RX, but opposite from DSP
+#define I2S_IDX_START (0)
+#define DSP_IDX_START (1)
+
+// Overlap buffers
+float txBuffer_overlap[HOP_SIZE];
+float rxBuffer_overlap[HOP_SIZE];
+
+// Debug buffers
+float rx_dbg[HOP_SIZE];
+float tx_dbg[HOP_SIZE];
 
 // Stream handles
 i2s_chan_handle_t rx_handle, tx_handle;
-StreamBufferHandle_t xRxStreamBuffer, xTxStreamBuffer;
-#define RX_READ_SIZE_B (2 * RX_TX_BUFFER_LEN * 4) // == length of rx/tx buffers
-#define STREAM_BUFFER_SIZE_B (3 * RX_READ_SIZE_B / 2) // Bigger for some overflow
-#define TX_POP_SIZE_B (1024)
 
 // Task handles
-static TaskHandle_t xDSPTaskHandle, xRxTaskHandle, xTxTaskHandle;
+static TaskHandle_t xDSPTaskHandle, xRxTaskHandle, xTxTaskHandle, xTaskStatsHandle;
 #define DSP_TASK_STACK_SIZE (16384u) // Check watermark!
 #define DSP_TASK_CORE (0)
 #define RX_TASK_STACK_SIZE (4096u) // Check watermark!
 #define RX_TASK_CORE (1)
 #define TX_TASK_STACK_SIZE (4096u) // Check watermark!
 #define TX_TASK_CORE (1)
-
-#define DSP_DONE_OFFSET (0)
-#define TX_DONE_OFFSET  (1)
+#define TASK_STATS_STACK_SIZE (4096u)
+#define TASK_STATS_CORE (0)
 
 #define DSP_TASK_PRIORITY (1U) // Just above idle
-#define RX_TASK_PRIORITY (2U) // Higher due to it being blocked
-#define TX_TASK_PRIORITY (3U) // Higher still since it will spend the most time blocked
+#define TX_TASK_PRIORITY (10U) // Higher due to it being blocked
+#define RX_TASK_PRIORITY (10U) // Higher still since it will spend the most time blocked
+#define TASK_STATS_PRIORITY (0U) // == IDLE PRIO
 
-static SemaphoreHandle_t xRxBufferMutex, xTxBufferMutex;
+// Event group
+EventGroupHandle_t xTaskSyncBits;
+#define DSP_TASK_BIT      ( 1 << 0 )
+#define TX_TASK_BIT       ( 1 << 1 )
+#define RX_TASK_BIT       ( 1 << 2 )
+#define SWAP_COMPLETE_BIT ( 1 << 3 )
+#define BUFF_SWAP_BITS (DSP_TASK_BIT | TX_TASK_BIT | RX_TASK_BIT) // Sync to initiate buffer swap
+#define ALL_SYNC_BITS  (BUFF_SWAP_BITS | SWAP_COMPLETE_BIT) // Sync to move on
+#define SYNC_TIMEOUT_TICKS  (500 / portTICK_PERIOD_MS) // Raise error if not synced by this point
+
+// Semaphores
+static SemaphoreHandle_t xDbgMutex;
 
 ////// HELPER FUNCTIONS //////
 
@@ -112,77 +124,44 @@ esp_err_t inv_fft(float* fft_arr, int num_samples)
     return ESP_OK;
 }
 
-void print_task_stats()
+void print_task_stats(void* pvParameters)
 {
     const char* TAG = "Task Stats";
 
-    // Grab mutex
-    if (xSemaphoreTake(xRxBufferMutex, portMAX_DELAY) != pdTRUE) {
-        ESP_LOGE(TAG, "Failed to get RX buffer mutex for stats");
-        return;
+    while (1) {
+        vTaskDelay(3000 / portTICK_PERIOD_MS);
+
+        // Grab mutex
+        if (xSemaphoreTake(xDbgMutex, portMAX_DELAY) != pdTRUE) {
+            ESP_LOGE(TAG, "Failed to get debug buffer mutex for stats");
+            return;
+        }
+
+        // Calculate average time spent calculating FFT/iFFT in ms
+        float fft_calc_time_avg = fft_calc_time_sum / loop_count;
+        // Calculate average error per element of most recent sample
+        float avg_element_err_pct = 0;
+        for (int i = 0; i < HOP_SIZE; i++)
+        {
+            float rx_tx_diff_raw = tx_dbg[i] - rx_dbg[i];
+            float rx_tx_diff_pct = (rx_dbg[i] != 0) ? rx_tx_diff_raw / fabsf(rx_dbg[i]) :
+                                (tx_dbg[i] == 0) ? 0 : 1.0;
+            rx_tx_diff_pct *= 100.0;
+            avg_element_err_pct += fabsf(rx_tx_diff_pct);
+        }
+        avg_element_err_pct /= HOP_SIZE;
+        
+        ESP_LOGI(TAG, "Running average FFT/iFFT calc time: %.4f ms, avg error: %.2f %%",
+            fft_calc_time_avg, avg_element_err_pct);
+        ESP_LOGI(TAG, "TX overflow hit count: %0d, RX overflow hit count: %0d", tx_ovfl_hit, rx_ovfl_hit);
+
+        // Clear sum and count
+        fft_calc_time_sum = 0;
+        loop_count = 0;
+
+        // Release mutex
+        xSemaphoreGive(xDbgMutex);
     }
-    if (xSemaphoreTake(xTxBufferMutex, portMAX_DELAY) != pdTRUE) {
-        ESP_LOGE(TAG, "Failed to get TX buffer mutex for stats");
-        return;
-    }
-
-    // Calculate average time spent calculating FFT/iFFT in ms
-    float fft_calc_time_avg = fft_calc_time_sum / loop_count;
-    // Calculate average error per element of most recent sample
-    float avg_element_err_pct = 0;
-    for (int i = 0; i < RX_TX_BUFFER_LEN; i++)
-    {
-        float rx_tx_diff_raw = tx_dbg[i] - rx_dbg[i];
-        float rx_tx_diff_pct = (rx_dbg[i] != 0) ? rx_tx_diff_raw / fabsf(rx_dbg[i]) :
-                            (tx_dbg[i] == 0) ? 0 : 1.0;
-        rx_tx_diff_pct *= 100.0;
-        avg_element_err_pct += fabsf(rx_tx_diff_pct);
-    }
-    avg_element_err_pct /= RX_TX_BUFFER_LEN;
-    
-    ESP_LOGI(TAG, "Running average FFT/iFFT calc time: %.4f ms, avg error: %.2f %%",
-        fft_calc_time_avg, avg_element_err_pct);
-
-    // Clear sum and count
-    fft_calc_time_sum = 0;
-    loop_count = 0;
-
-    // Release mutexes
-    xSemaphoreGive(xRxBufferMutex);
-    xSemaphoreGive(xTxBufferMutex);
-}
-
-void audio_passthrough() {
-    static const char* TAG = "Audio Passthrough";
-
-    unsigned int start_cc = dsp_get_cpu_cycle_count();
-
-    if (xSemaphoreTake(xRxBufferMutex, 500 / portTICK_PERIOD_MS) != pdTRUE) {
-        ESP_LOGE(TAG, "Failed to get mutex for RX debug buffer!");
-    }
-    if (xSemaphoreTake(xTxBufferMutex, 500 / portTICK_PERIOD_MS) != pdTRUE) {
-        ESP_LOGE(TAG, "Failed to get mutex for RX debug buffer!");
-    }
-
-    // Copy buffer directly
-    for (int i = 0; i < RX_TX_BUFFER_LEN; i++)
-    {
-        txBuffer[2 * i] = rxBuffer[2 * i];
-        txBuffer[2 * i + 1] = rxBuffer[2 * i];
-
-        rx_dbg[i] = rxBuffer[2 * i];
-        tx_dbg[i] = txBuffer[2 * i];
-    }
-
-    // Release semaphores
-    xSemaphoreGive(xRxBufferMutex);
-    xSemaphoreGive(xTxBufferMutex);
-    
-    unsigned int end_cc = dsp_get_cpu_cycle_count();
-
-    // Calculate time spent, add to running sum
-    fft_calc_time_sum += (float)(end_cc - start_cc) / 240e3;
-    loop_count++;
 }
 
 /**
@@ -191,22 +170,21 @@ void audio_passthrough() {
  * In this app, performs FFT and iFFT on data, essentially acting
  * as a passthrough
  */
-void audio_data_modification() {
+void audio_data_modification(int* txBuffer, int* rxBuffer) {
     static const char* TAG = "Audio Modification";
 
     // Copy RX overlap into debug buffer
-    if (xSemaphoreTake(xRxBufferMutex, 500 / portTICK_PERIOD_MS) != pdTRUE) {
+    if (xSemaphoreTake(xDbgMutex, 500 / portTICK_PERIOD_MS) != pdTRUE) {
         ESP_LOGE(TAG, "Failed to get mutex for RX debug buffer!");
     }
     memcpy(rx_dbg, rxBuffer_overlap, sizeof(rx_dbg));
-    xSemaphoreGive(xRxBufferMutex);
 
     unsigned int start_cc = dsp_get_cpu_cycle_count();
 
     // Copy values of rxBuffer into FFT buffer
     for (int i = 0; i < N_SAMPLES; i++) {
         // Select sample. If first half, use rxBuffer_overlap. Otherwise use rxBuffer
-        int rx_val = (i < RX_TX_BUFFER_LEN) ? rxBuffer_overlap[i] : rxBuffer[2 * (i - RX_TX_BUFFER_LEN)];
+        int rx_val = (i < HOP_SIZE) ? rxBuffer_overlap[i] : rxBuffer[2 * (i - HOP_SIZE)];
 
         // Dot-product with hann window
         // Downshift to prevent overflow (last 8 bits are always 0)
@@ -236,11 +214,8 @@ void audio_data_modification() {
     fft_calc_time_sum += (float)(end_cc - start_cc) / 240e3;
     loop_count++;
 
-    if (xSemaphoreTake(xTxBufferMutex, 500 / portTICK_PERIOD_MS) != pdTRUE) {
-        ESP_LOGE(TAG, "Failed to get mutex for TX debug buffer!");
-    }
     // Fill TX buffer
-    for (int i = 0; i < RX_TX_BUFFER_LEN; i++)
+    for (int i = 0; i < HOP_SIZE; i++)
     {
         // Add-overlay beginning portion of iFFT into txBuffer
         float tx_val = tx_iFFT[2 * i];
@@ -252,30 +227,23 @@ void audio_data_modification() {
         tx_dbg[i] = (txBuffer_overlap[i] + tx_val) * 256;
 
         // Store latter portion for use next loop
-        float tx_overlap_val = tx_iFFT[2 * (i + RX_TX_BUFFER_LEN)];
+        float tx_overlap_val = tx_iFFT[2 * (i + HOP_SIZE)];
         txBuffer_overlap[i] = tx_overlap_val;
     }
-    xSemaphoreGive(xTxBufferMutex);
+    xSemaphoreGive(xDbgMutex);
 }
 
 ///// CALLBACKS ///// 
 
-// Called whenever buffer has received data. May be unnecessary
-static IRAM_ATTR bool rx_rcvd_callback(i2s_chan_handle_t handle, i2s_event_data_t *event, void *user_ctx)
-{
-    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-
-    // Set task notification for RX task to continue
-    configASSERT( xRxTaskHandle != NULL );
-    vTaskNotifyGiveFromISR(xRxTaskHandle, &xHigherPriorityTaskWoken);
-
-    portYIELD_FROM_ISR( xHigherPriorityTaskWoken );
-
-    return false; // FIXME what does this boolean indicate? Docs not clear
-
-}
-
-// Called whenever buffer for output has been emptied
+/**
+ * @brief Callback for TX send completion. Will send notification to I2S
+ * transmit task to push data.
+ * 
+ * @param handle I2S channel handle (TX in this case)
+ * @param event Event data
+ * @param user_ctx User data
+ * @return IRAM_ATTR False
+ */
 static IRAM_ATTR bool tx_sent_callback(i2s_chan_handle_t handle, i2s_event_data_t *event, void *user_ctx)
 {
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
@@ -289,16 +257,54 @@ static IRAM_ATTR bool tx_sent_callback(i2s_chan_handle_t handle, i2s_event_data_
     return false; // FIXME what does this boolean indicate? Docs not clear
 }
 
-static IRAM_ATTR bool i2s_rx_overflow(i2s_chan_handle_t handle, i2s_event_data_t *event, void *user_ctx)
+/**
+ * @brief Callback for RX received event. Will send notification
+ * to I2S receive task to pop data.
+ * 
+ * @param handle I2S channel handle (RX in this case)
+ * @param event Event data
+ * @param user_ctx User data
+ * @return IRAM_ATTR False
+ */
+static IRAM_ATTR bool rx_rcvd_callback(i2s_chan_handle_t handle, i2s_event_data_t *event, void *user_ctx)
 {
-    // configASSERT( false ); // Fail immediately (for now)
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
+    // Set task notification for RX task to continue
+    configASSERT( xRxTaskHandle != NULL );
+    vTaskNotifyGiveFromISR(xRxTaskHandle, &xHigherPriorityTaskWoken);
+
+    portYIELD_FROM_ISR( xHigherPriorityTaskWoken );
     
     return false;
 }
 
-static IRAM_ATTR bool i2s_tx_overflow(i2s_chan_handle_t handle, i2s_event_data_t *event, void *user_ctx)
+/**
+ * @brief Callback for RX receive queue overflow. Increments running counter.
+ * 
+ * @param handle I2S channel handle (TX in this case)
+ * @param event Event data
+ * @param user_ctx User data
+ * @return IRAM_ATTR False
+ */
+static IRAM_ATTR bool rx_rcvd_overflow(i2s_chan_handle_t handle, i2s_event_data_t *event, void *user_ctx)
 {
-    // configASSERT( false ); // Fail immediately (for now)
+    rx_ovfl_hit++;
+    
+    return false;
+}
+
+/**
+ * @brief Callback for TX send queue overflow. Increments running counter.
+ * 
+ * @param handle I2S channel handle (TX in this case)
+ * @param event Event data
+ * @param user_ctx User data
+ * @return IRAM_ATTR False
+ */
+static IRAM_ATTR bool tx_sent_overflow(i2s_chan_handle_t handle, i2s_event_data_t *event, void *user_ctx)
+{
+    tx_ovfl_hit++;
     
     return false;
 }
@@ -307,41 +313,30 @@ static IRAM_ATTR bool i2s_tx_overflow(i2s_chan_handle_t handle, i2s_event_data_t
 
 void proc_audio_data(void* pvParameters)
 {
-    static const char *TAG = "dsp_loop";
-
-    // Subscribe to watchdog timer (NULL->current task)
-    esp_task_wdt_add(NULL);
-    
     // Main loop
     while (1) {
-        size_t bytes_read = 0, bytes_written = 0;
+        // Clear event bit
+        (void) xEventGroupClearBits(xTaskSyncBits, DSP_TASK_BIT);
+
+        // Set buffer pointers
+        int* rxBuffer = rxBuffers[dsp_idx];
+        int* txBuffer = txBuffers[dsp_idx];
+
+        // Modify data
+        audio_data_modification(txBuffer, rxBuffer);
 
         // Copy rxBuffer into rxBuffer_overlap
-        for (int i = 0; i < RX_TX_BUFFER_LEN; i++)
+        for (int i = 0; i < HOP_SIZE; i++)
         {
             rxBuffer_overlap[i] = rxBuffer[2 * i];
         }
 
-        // Pop from receive buffer
-        bytes_read = xStreamBufferReceive(xRxStreamBuffer, rxBuffer, sizeof(rxBuffer), 5000 / portTICK_PERIOD_MS);
-        if (bytes_read != sizeof(rxBuffer)) {
-            ESP_LOGE(TAG, "Failed to read all rxBuffer data from stream buffer! %0d out of %0d B",
-                     bytes_read, sizeof(rxBuffer));
-        }
-
-        // Modify data
-        // audio_passthrough(); // FIXME for debug
-        audio_data_modification();
-
-        // Write to stream buffer
-        bytes_written = xStreamBufferSend(xTxStreamBuffer, txBuffer, STREAM_BUFFER_SIZE_B, 10000 / portTICK_PERIOD_MS);
-        if (bytes_written != STREAM_BUFFER_SIZE_B) {
-            ESP_LOGE(TAG, "Failed to write all txBuffer data to stream buffer! %0d B out of %0d B",
-                    bytes_written, STREAM_BUFFER_SIZE_B);
-        }
-
-        // Reset watchdog timeout
-        ESP_ERROR_CHECK(esp_task_wdt_reset());
+        // Set event group bit
+        // Ignore result (will be checked in main loop)
+        (void) xEventGroupSync(xTaskSyncBits,
+                               DSP_TASK_BIT,
+                               ALL_SYNC_BITS,
+                               portMAX_DELAY);
     }
     
 }
@@ -349,9 +344,6 @@ void proc_audio_data(void* pvParameters)
 void i2s_receive(void* pvParameters)
 {
     static const char *TAG = "I2S receive";
-    int* stream_data = (int *)malloc(TX_POP_SIZE_B);
-
-    configASSERT( stream_data != NULL );
 
     configASSERT( rx_handle != NULL );
 
@@ -359,33 +351,35 @@ void i2s_receive(void* pvParameters)
     ESP_ERROR_CHECK(i2s_channel_enable(rx_handle));
 
     while (1) {
-        size_t data_received, data_pushed = 0;
+        size_t data_received = 0;
+        
+        // Clear event bit
+        (void) xEventGroupClearBits(xTaskSyncBits, RX_TASK_BIT);
 
-        // Wait for task notification from callback before starting to read data
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        // Wait for sent notification
+        (void) ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
+        int* stream_data = rxBuffers[i2s_idx];
 
         // Read from I2S buffer
-        ESP_ERROR_CHECK(i2s_channel_read(rx_handle, stream_data, TX_POP_SIZE_B, &data_received, 1000));
-        if (data_received != TX_POP_SIZE_B) {
-            ESP_LOGE(TAG, "Only read %d out of %d bytes from I2S buffer", data_received, data_pushed);
-            if (data_received == 0) continue;
+        i2s_channel_read(rx_handle, stream_data, HOP_BUFFER_SIZE_B, &data_received, 300 / portTICK_PERIOD_MS);
+        if (data_received != HOP_BUFFER_SIZE_B) {
+            ESP_LOGE(TAG, "Only read %d out of %d bytes from I2S buffer", data_received, HOP_BUFFER_SIZE_B);
         }
 
-        // Pop data from stream
-        data_pushed = xStreamBufferSend(xRxStreamBuffer, stream_data, data_received, portMAX_DELAY);
-        if (data_pushed != data_received) {
-            ESP_LOGE(TAG, "Only pushed %d out of %d bytes to stream", data_pushed, data_received);
-        }
+        // Set event group bit
+        // Ignore result (will be checked in main loop)
+        (void) xEventGroupSync(xTaskSyncBits,
+                               RX_TASK_BIT,
+                               ALL_SYNC_BITS,
+                               portMAX_DELAY);
+
     }
-    free(stream_data);
 }
 
 void i2s_transmit(void* pvParameters)
 {
     static const char *TAG = "I2S transmit";
-    int* stream_data = (int *)malloc(TX_POP_SIZE_B);
-
-    configASSERT( stream_data != NULL );
 
     configASSERT( tx_handle != NULL );
     
@@ -393,24 +387,27 @@ void i2s_transmit(void* pvParameters)
     ESP_ERROR_CHECK(i2s_channel_enable(tx_handle));
 
     while (1) {
-        size_t data_popped = 0, data_written = 0;
-        // Pop data from stream
-        data_popped = xStreamBufferReceive(xTxStreamBuffer, stream_data, TX_POP_SIZE_B, 1000);
-        if (data_popped != TX_POP_SIZE_B) {
-            ESP_LOGW(TAG, "Only popped %d out of %d bytes from stream", data_popped, TX_POP_SIZE_B);
-            if (data_popped == 0) continue;
-        }
+        size_t data_written = 0;
+
+        // Clear event bits
+        (void) xEventGroupClearBits(xTaskSyncBits, TX_TASK_BIT);
+
+        int* stream_data = txBuffers[i2s_idx];
 
         // Write to I2S buffer
-        ESP_ERROR_CHECK(i2s_channel_write(tx_handle, stream_data, data_popped, &data_written, 1000));
-        if (data_written != data_popped) {
-            ESP_LOGW(TAG, "Only wrote %d out of %d bytes to I2S buffer", data_written, data_popped);
+        // No error check here to allow for partial writes
+        i2s_channel_write(tx_handle, stream_data, HOP_BUFFER_SIZE_B, &data_written, 300 / portTICK_PERIOD_MS);
+        if (data_written != HOP_BUFFER_SIZE_B) {
+            ESP_LOGE(TAG, "Only wrote %d out of %d bytes to I2S buffer", data_written, HOP_BUFFER_SIZE_B);
         }
 
-        // Wait for task notification from callback
-        (void) ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        // Set event group bit
+        // Ignore result (will be checked in main loop)
+        (void) xEventGroupSync(xTaskSyncBits,
+                               TX_TASK_BIT,
+                               ALL_SYNC_BITS,
+                               portMAX_DELAY);
     }
-    free(stream_data);
 }
 
 ///// MAIN LOOP ///// 
@@ -425,14 +422,24 @@ void app_main(void)
     es_i2s_init(&tx_handle, &rx_handle, I2S_SAMPLING_FREQ_HZ);
 
     ESP_LOGW(TAG, "Channels initiated!");
-    // Instantiate stream buffers
-    xRxStreamBuffer = xStreamBufferCreate(STREAM_BUFFER_SIZE_B, RX_READ_SIZE_B);
-    xTxStreamBuffer = xStreamBufferCreate(STREAM_BUFFER_SIZE_B, TX_POP_SIZE_B); // A little lower to ensure data will be popped as soon as it's ready
-    if (xRxStreamBuffer == NULL || xTxStreamBuffer == NULL) 
-    {
-        ESP_LOGE(TAG, "Failed to instantiate stream buffers!");
+
+    // Instantiate TX/RX buffers
+    for (int i = 0; i < NUM_BUFFERS; i++) {
+        txBuffers[i] = (int *)calloc(2 * HOP_SIZE, sizeof(int));
+        rxBuffers[i] = (int *)calloc(2 * HOP_SIZE, sizeof(int));
+
+        configASSERT( (txBuffers[i] != NULL) && (rxBuffers[i] != NULL) );
     }
-    else ESP_LOGW(TAG, "Stream buffers instantiated!");
+
+    // Clear out all other memory buffers
+    memset(rx_FFT, 0, sizeof(rx_FFT));
+    memset(tx_iFFT, 0.0, sizeof(tx_iFFT));
+    memset(txBuffer_overlap, 0, sizeof(txBuffer_overlap));
+    memset(rxBuffer_overlap, 0, sizeof(rxBuffer_overlap));
+
+    // Intantiate indices
+    i2s_idx = I2S_IDX_START;
+    dsp_idx = DSP_IDX_START;
 
     // Generate sin/cos coefficients for FFT calculations
     ESP_ERROR_CHECK(dsps_fft2r_init_fc32(NULL, N_SAMPLES));
@@ -440,16 +447,18 @@ void app_main(void)
     // Generate Hann window coefficients
     dsps_wind_hann_f32(hann_win, N_SAMPLES);
 
-    // Create mutexes for buffers
-    xRxBufferMutex = xSemaphoreCreateMutex();
-    xTxBufferMutex = xSemaphoreCreateMutex();
+    // Create mutex for debug buffers
+    xDbgMutex = xSemaphoreCreateMutex();
+
+    // Instantiate event group for task sync
+    xTaskSyncBits = xEventGroupCreate();
 
     // Instantiate I2S callbacks
     i2s_event_callbacks_t cbs = {
         .on_recv = rx_rcvd_callback,
-        .on_recv_q_ovf = i2s_rx_overflow,
+        .on_recv_q_ovf = rx_rcvd_overflow,
         .on_sent = tx_sent_callback,
-        .on_send_q_ovf = i2s_tx_overflow,
+        .on_send_q_ovf = tx_sent_overflow,
     };
     ESP_ERROR_CHECK(i2s_channel_register_event_callback(rx_handle, &cbs, NULL));
     ESP_ERROR_CHECK(i2s_channel_register_event_callback(tx_handle, &cbs, NULL));
@@ -490,6 +499,17 @@ void app_main(void)
         TX_TASK_CORE
     );
 
+    ESP_LOGW(TAG, "Starting stats task...");
+    xReturned |= xTaskCreatePinnedToCore(
+        print_task_stats, 
+        "I2S Transmit Task",
+        TASK_STATS_STACK_SIZE,
+        NULL,
+        TASK_STATS_PRIORITY,
+        &xTaskStatsHandle,
+        TASK_STATS_CORE
+    );
+
     if ( xReturned != pdPASS )
     {
         ESP_LOGE(TAG, "Failed to create tasks! Error: %d. Restarting ESP in 5 seconds...", xReturned);
@@ -501,9 +521,31 @@ void app_main(void)
     // Main loop
     ESP_LOGI(TAG, "Finished setup, entering main loop.");
     while (1) {
-        // Delay some time
-        vTaskDelay(3000 / portTICK_PERIOD_MS);
-        print_task_stats();
+        EventBits_t uxReturn;
+        // Clear switch bit
+        (void) xEventGroupClearBits(xTaskSyncBits, BUFF_SWAP_BITS);
+        // Wait for all other tasks to finish
+        uxReturn = xEventGroupWaitBits(xTaskSyncBits,
+                                       BUFF_SWAP_BITS,
+                                       pdFALSE, // Don't clear on exit
+                                       pdTRUE, // Wait for all bits
+                                       SYNC_TIMEOUT_TICKS);
+
+        // Assert all bits have been set
+        configASSERT( (uxReturn & BUFF_SWAP_BITS) == BUFF_SWAP_BITS );
+
+        // Swap indices with XOR
+        dsp_idx ^= 1;
+        i2s_idx ^= 1;
+
+        configASSERT( dsp_idx != i2s_idx );
+
+        // Set remaining bit
+        uxReturn = xEventGroupSync(xTaskSyncBits,
+                                   SWAP_COMPLETE_BIT,
+                                   ALL_SYNC_BITS,
+                                   0); // Should be no delay
+        configASSERT( (uxReturn & ALL_SYNC_BITS) == ALL_SYNC_BITS );
     }
 
     // If this point is hit, wait some time then restart
