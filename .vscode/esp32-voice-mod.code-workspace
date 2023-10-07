@@ -4,19 +4,13 @@
       "path": "../fft_testing/fft_passthrough"
     },
     {
-      "path": "../fft_testing/mic_fft"
-    },
-    {
-      "path": "../module_testing/passthrough_testing"
-    },
-    {
       "path": "../fft_testing/fft_pure_tone"
     },
     {
-      "path": "../module_testing/audio_jack_testing"
+      "path": "../components"
     },
     {
-      "path": "../components"
+      "path": "../fft_mod_testing/shift_pure_tone"
     }
   ],
   "settings": {
@@ -54,7 +48,9 @@
       "dsps_wind_hann.h": "c",
       "inttypes.h": "c",
       "stream_buffer.h": "c",
-      "i2c_master.h": "c"
+      "i2c_master.h": "c",
+      "esp_dsp.h": "c",
+      "*.inc": "c"
     },
     "idf.espIdfPath": "${env:IDF_PATH}"
   }
