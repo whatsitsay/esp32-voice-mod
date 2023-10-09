@@ -63,6 +63,10 @@ int i2s_idx, dsp_idx; // I2S idx should be the same between TX/RX, but opposite 
 float txBuffer_overlap[HOP_SIZE];
 float rxBuffer_overlap[HOP_SIZE];
 
+// Debug buffers
+float rx_dbg[HOP_SIZE];
+float tx_dbg[HOP_SIZE];
+
 // Stream handles
 i2s_chan_handle_t rx_handle, tx_handle;
 
@@ -154,7 +158,7 @@ void audio_data_modification(int* txBuffer, int* rxBuffer) {
 
     // Copy former half of current rx_FFT into previous FFT buffer
     // Use sizeof previous buffer, given it should be smaller (symmetrical data)
-    memcpy(prev_rx_FFT, rx_FFT, sizoef(prev_rx_FFT));
+    memcpy(prev_rx_FFT, rx_FFT, sizeof(prev_rx_FFT));
 
     // Copy values of rxBuffer into FFT buffer
     for (int i = 0; i < N_SAMPLES; i++) {
@@ -320,18 +324,20 @@ void proc_audio_data(void* pvParameters)
 
 void tone_gen(void* pvParameters)
 {
-    static const char *TAG = "I2S receive";
+    float tone_buffer[HOP_SIZE];
+    // Generate tone before entering loop
+    dsps_tone_gen_f32(tone_buffer, HOP_SIZE, TONE_AMPL, TONE_FREQ_SIN, 0);
 
     while (1) {
-        size_t data_received = 0;
-        
         // Clear event bit
         (void) xEventGroupClearBits(xTaskSyncBits, RX_TASK_BIT);
 
         // Totally unnecessary, but fill given rxBuffer with tone data
         // Task will still be paused while other longer tasks finish up
-        int* tone_buffer = rxBuffers[i2s_idx];
-        dsps_tone_gen_f32(tone_buffer, N / 2, TONE_AMPL, TONE_FREQ_SIN, 0);
+        for (int i = 0; i < HOP_SIZE; i++) {
+            rxBuffers[i2s_idx][2 * i] = tone_buffer[i];
+            rxBuffers[i2s_idx][2 * i + 1] = 0;
+        }
 
         // Set event group bit
         // Ignore result (will be checked in main loop)
@@ -385,7 +391,7 @@ void app_main(void)
     
     // Initiallize ES8388 and I2S channel
     es8388_config();
-    es_i2s_init(&tx_handle, &rx_handle, I2S_SAMPLING_FREQ_HZ)
+    es_i2s_init(&tx_handle, &rx_handle, I2S_SAMPLING_FREQ_HZ);
 
     ESP_LOGW(TAG, "Channels initiated!");
 
@@ -412,11 +418,11 @@ void app_main(void)
     peak_shift_cfg_t cfg = {
         .num_samples = N,
         .hop_size    = HOP_SIZE,
-        .bin_freq_step = 1.0 * I2S_SAMPLING_FREQ_HZ / N_SAMPLES;
+        .bin_freq_step = 1.0 * I2S_SAMPLING_FREQ_HZ / N_SAMPLES,
         .fft_ptr = rx_FFT,
         .fft_prev_ptr = prev_rx_FFT,
         .fft_mag_ptr = rx_FFT_mag,
-        .fft_out_ptr = tx_iFFT;
+        .fft_out_ptr = tx_iFFT,
     };
     init_peak_shift_cfg(&cfg);
 

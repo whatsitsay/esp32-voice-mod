@@ -8,8 +8,10 @@
  */
 
 #include <math.h>
+#include "sdkconfig.h"
 #include "esp_err.h"
 #include "esp_dsp.h"
+#include "freertos/FreeRTOS.h"
 #include "algo_common.h"
 
 esp_err_t init_dsp_coeffs(int num_samples, float* hann_win)
@@ -19,7 +21,7 @@ esp_err_t init_dsp_coeffs(int num_samples, float* hann_win)
   resp |= dsps_fft2r_init_fc32(NULL, num_samples);
 
   // Generate Hann window coefficients
-  resp |= dsps_wind_hann_f32(hann_win, num_samples);
+  dsps_wind_hann_f32(hann_win, num_samples);
 
   return resp;
 }
@@ -107,8 +109,8 @@ void calc_fft_phase(float* fft_arr, float* fft_phase, int num_samples)
 
 void mult_complex(float x_real, float x_imag, float y_real, float y_imag, float* prod_real, float* prod_imag)
 {
-  prod_real = (x_real * y_real) - (x_imag * y_imag);
-  prod_imag = (x_real * y_imag) + (x_imag * y_real);
+  *prod_real = (x_real * y_real) - (x_imag * y_imag);
+  *prod_imag = (x_real * y_imag) + (x_imag * y_real);
 }
 
 void polar_to_complex(float mag, float angle, float* cpx_real, float* cpx_imag)

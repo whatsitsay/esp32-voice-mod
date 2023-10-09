@@ -12,11 +12,18 @@
 
 #include "peak_shift.h"
 #include <math.h>
+#include <string.h>
+#include "sdkconfig.h"
+#include "freertos/FreeRTOS.h"
 #include "esp_err.h"
 #include "esp_dsp.h"
-#include "algo_common/algo_common.h"
+#include "algo_common.h"
 
 #define NUM_NEIGHBORS (2) // For peak detection
+
+static peak_shift_cfg_t* peak_shift_cfg;
+static peak_data_t peak_data[MAX_PEAKS];
+static int num_peaks;
 
 void init_peak_shift_cfg(peak_shift_cfg_t* cfg)
 {
@@ -28,7 +35,7 @@ void reset_phase_comp_arr(float* run_phase_comp_ptr)
 {
   int num_samples = peak_shift_cfg->num_samples;
   // Check size. Should be num samples (2 * actual FFT size halved for just first reflection)
-  configASSERT( sizeof(run_phase_comp_ptr) / sizeof(float) == num_samples );
+  configASSERT( sizeof(run_phase_comp_ptr) >= num_samples * sizeof(float) );
 
   // Increment by two for real + imag
   // However, *don't* double size as we only need the first half
@@ -121,7 +128,7 @@ void shift_peaks_int(float shift_factor, float* run_phase_comp_ptr)
 {
   int num_samples = peak_shift_cfg->num_samples;
   // Check size. Should be num samples (2 * actual FFT size halved for just first reflection)
-  configASSERT( sizeof(run_phase_comp_ptr) / sizeof(float) == num_samples );
+  configASSERT( sizeof(run_phase_comp_ptr) >= num_samples * sizeof(float) );
 
   // Start by zero-ing out output FFT array
   // Doubled for real + imag

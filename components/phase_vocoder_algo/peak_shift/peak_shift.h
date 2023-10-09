@@ -29,9 +29,6 @@ typedef struct {
 } peak_data_t;
 
 #define MAX_PEAKS (100) // Somewhat of a fudge factor to limit memory footprint
-static peak_shift_cfg_t* peak_shift_cfg;
-static peak_data_t peak_data[MAX_PEAKS];
-static num_peaks;
 
 /**
  * @brief Store peak shift algorithm configuration and pointers
@@ -84,4 +81,4 @@ int find_local_peaks(void);
  * 
  * @param shift_factor - Factor by which to shift frequency data
  */
-void shift_peaks_int(float shift_factor);
+void shift_peaks_int(float shift_factor, float* run_phase_comp_ptr);
