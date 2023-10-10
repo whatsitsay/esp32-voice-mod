@@ -38,17 +38,14 @@ esp_err_t calc_fft(float* data_arr, int num_samples)
 
 void fill_mirror_fft(float* fft_arr, int num_samples)
 {
-  // Ensure size matches expected: 2 x num samples given real + imag
-  configASSERT( sizeof(fft_arr) >= 2 * num_samples * sizeof(float) );
-
   for (int i = 0; i < num_samples; i+= 2)
   {
     // For real signals, second half after Nyquist freq will mirror
     // first half, but with complex conjugate.
     // Thus, copy first half of array in reverse order to the end
     // of the array and flip the sign of the imaginary component (2nd)
-    fft_arr[2 * num_samples - 1 - i] = fft_arr[i];
-    fft_arr[2 * num_samples - 2 - i] = fft_arr[i+1] * -1; // Sign flipped for conjugate
+    fft_arr[2 * num_samples - 2 - i] = fft_arr[i];
+    fft_arr[2 * num_samples - 1 - i] = fft_arr[i+1] * -1; // Sign flipped for conjugate
   }
 }
 
@@ -84,7 +81,7 @@ void calc_fft_mag(float* fft_arr, float* fft_mag, int num_samples)
     float real = fft_arr[2 * i];
     float imag = fft_arr[2 * i + 1];
 
-    fft_mag[i] = sqrtf(powf(real, 2) + powf(imag, 2));
+    fft_mag[i] = sqrtf(powf(real, 2) + powf(imag, 2)) / num_samples;
   }
 }
 

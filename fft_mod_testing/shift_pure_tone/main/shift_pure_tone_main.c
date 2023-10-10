@@ -63,10 +63,6 @@ int i2s_idx, dsp_idx; // I2S idx should be the same between TX/RX, but opposite 
 float txBuffer_overlap[HOP_SIZE];
 float rxBuffer_overlap[HOP_SIZE];
 
-// Debug buffers
-float rx_dbg[HOP_SIZE];
-float tx_dbg[HOP_SIZE];
-
 // Stream handles
 i2s_chan_handle_t rx_handle, tx_handle;
 
@@ -78,7 +74,7 @@ static TaskHandle_t xDSPTaskHandle, xRxTaskHandle, xTxTaskHandle, xTaskStatsHand
 #define RX_TASK_CORE (1)
 #define TX_TASK_STACK_SIZE (4096u) // Check watermark!
 #define TX_TASK_CORE (1)
-#define TASK_STATS_STACK_SIZE (4096u)
+#define TASK_STATS_STACK_SIZE (4096u) // Check watermark!
 #define TASK_STATS_CORE (0)
 
 #define DSP_TASK_PRIORITY (1U) // Just above idle
@@ -108,6 +104,9 @@ static SemaphoreHandle_t xDbgMutex;
 #define TONE_FREQ_HZ (I2S_SAMPLING_FREQ_HZ / SAMPLES_PER_CYCLE / 2) // A little backwards, but should help even wave
 #define TONE_FREQ_SIN (1.0 * TONE_FREQ_HZ / I2S_SAMPLING_FREQ_HZ) // Sinusoid apparent freq
 #define TONE_VOLUME_DB (-35) // Sound is loud otherwise
+#define PLOT_LEN (SAMPLES_PER_CYCLE * 2)
+static float tone_buffer[HOP_SIZE];
+static float tx_dbg[PLOT_LEN];
 
 ////// HELPER FUNCTIONS //////
 
@@ -129,13 +128,18 @@ void print_task_stats(void* pvParameters)
         // Calculate average number of peaks "detected" by algorithm
         float num_peaks_avg = num_peaks_sum / loop_count;
         
-        ESP_LOGI(TAG, "Running average DSP calc time: %.4f ms, avg num peaks: %.2f %%",
+        ESP_LOGW(TAG, "Running average DSP calc time: %.4f ms, avg num peaks: %.2f",
             dsp_calc_time_avg, num_peaks_avg);
-        ESP_LOGI(TAG, "TX overflow hit count: %0d, RX overflow hit count: %0d", tx_ovfl_hit, rx_ovfl_hit);
+        ESP_LOGW(TAG, "TX overflow hit count: %0d, RX overflow hit count: %0d", tx_ovfl_hit, rx_ovfl_hit);
+        ESP_LOGI(TAG, "Input signal:");
+        dsps_view(tone_buffer, PLOT_LEN, PLOT_LEN / 4, 10, -1 * TONE_AMPL, TONE_AMPL, '*');
+        ESP_LOGI(TAG, "Output signal:");
+        dsps_view(tx_dbg, PLOT_LEN, PLOT_LEN / 4, 10, -1 * TONE_AMPL, TONE_AMPL, '*');
 
         // Clear sum and count
         dsp_calc_time_sum = 0;
         loop_count = 0;
+        num_peaks_sum = 0;
 
         // Release mutex
         xSemaphoreGive(xDbgMutex);
@@ -155,7 +159,6 @@ void audio_data_modification(int* txBuffer, int* rxBuffer) {
     if (xSemaphoreTake(xDbgMutex, 500 / portTICK_PERIOD_MS) != pdTRUE) {
         ESP_LOGE(TAG, "Failed to get mutex for RX debug buffer!");
     }
-    memcpy(rx_dbg, rxBuffer_overlap, sizeof(rx_dbg));
 
     // Copy former half of current rx_FFT into previous FFT buffer
     // Use sizeof previous buffer, given it should be smaller (symmetrical data)
@@ -179,11 +182,14 @@ void audio_data_modification(int* txBuffer, int* rxBuffer) {
     // Find peaks
     int num_peaks = find_local_peaks();
     configASSERT( num_peaks >= 0 ); // If -1, reached max
+    num_peaks_sum += num_peaks;
 
     // Perform peak shift, if there are any peaks
     if (num_peaks > 0) shift_peaks_int(SHIFT_FACTOR, run_phase_comp); 
     else reset_phase_comp_arr(run_phase_comp); // If no peaks, reset running phase compensation
 
+    // Fill latter half of FFT with conjugate mirror data
+    fill_mirror_fft(tx_iFFT, N);
 
     // Perform iFFT calc
     ESP_ERROR_CHECK(inv_fft(tx_iFFT, N));
@@ -192,16 +198,20 @@ void audio_data_modification(int* txBuffer, int* rxBuffer) {
     for (int i = 0; i < HOP_SIZE; i++)
     {
         // Add-overlay beginning portion of iFFT into txBuffer
-        float tx_val = tx_iFFT[2 * i] * hann_win[i]; // Window result (check if needed!;
+        // float tx_val = tx_iFFT[2 * i] * hann_win[i]; // Window result (check if needed!;
+        float tx_val = tx_iFFT[2 * i]; // No more need for windowing
         txBuffer[2 * i] = (int)(txBuffer_overlap[i] + tx_val); 
         txBuffer[2 * i] <<= I2S_DOWNSHIFT; // Increase int value
         txBuffer[2 * i + 1] = txBuffer[2 * i]; // Copy L and R
 
         // Store TX val to debug array for later comparison
-        tx_dbg[i] = (txBuffer_overlap[i] + tx_val) * 256;
+        if (i < PLOT_LEN) {
+            tx_dbg[i] = (txBuffer_overlap[i] + tx_val) * 256;
+        }
 
         // Store latter portion for use next loop
-        float tx_overlap_val = tx_iFFT[2 * (i + HOP_SIZE)] * hann_win[i + HOP_SIZE];
+        // float tx_overlap_val = tx_iFFT[2 * (i + HOP_SIZE)] * hann_win[i + HOP_SIZE];
+        float tx_overlap_val = tx_iFFT[2 * (i + HOP_SIZE)];
         txBuffer_overlap[i] = tx_overlap_val;
     }
     xSemaphoreGive(xDbgMutex);
@@ -325,7 +335,6 @@ void proc_audio_data(void* pvParameters)
 
 void tone_gen(void* pvParameters)
 {
-    float tone_buffer[HOP_SIZE];
     // Generate tone before entering loop
     dsps_tone_gen_f32(tone_buffer, HOP_SIZE, TONE_AMPL, TONE_FREQ_SIN, 0);
 
@@ -469,7 +478,7 @@ void app_main(void)
     ESP_LOGW(TAG, "Starting RX task..."); // Last to only start popping data when ready
     xReturned |= xTaskCreatePinnedToCore(
         tone_gen, 
-        "I2S Receive Task",
+        "Tone Gen Task",
         RX_TASK_STACK_SIZE,
         NULL,
         RX_TASK_PRIORITY,

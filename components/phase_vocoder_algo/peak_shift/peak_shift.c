@@ -14,7 +14,6 @@
 #include <math.h>
 #include <string.h>
 #include "sdkconfig.h"
-#include "freertos/FreeRTOS.h"
 #include "esp_err.h"
 #include "esp_dsp.h"
 #include "algo_common.h"
@@ -25,6 +24,8 @@ static peak_shift_cfg_t* peak_shift_cfg;
 static peak_data_t peak_data[MAX_PEAKS];
 static int num_peaks;
 
+const char* TAG = "Peak Shift Algorithm";
+
 void init_peak_shift_cfg(peak_shift_cfg_t* cfg)
 {
   peak_shift_cfg = cfg;
@@ -33,10 +34,6 @@ void init_peak_shift_cfg(peak_shift_cfg_t* cfg)
 
 void reset_phase_comp_arr(float* run_phase_comp_ptr)
 {
-  int num_samples = peak_shift_cfg->num_samples;
-  // Check size. Should be num samples (2 * actual FFT size halved for just first reflection)
-  configASSERT( sizeof(run_phase_comp_ptr) >= num_samples * sizeof(float) );
-
   // Increment by two for real + imag
   // However, *don't* double size as we only need the first half
   for (int i = 0; i < peak_shift_cfg->num_samples; i += 2)
@@ -61,6 +58,8 @@ int find_local_peaks(void)
   for (int i = NUM_NEIGHBORS; i < peak_shift_cfg->num_samples / 2 - NUM_NEIGHBORS; i++)
   {
     float check_val = peak_shift_cfg->fft_mag_ptr[i];
+    // First ensure check val is over threshold, to prevent noise
+    if (check_val < PEAK_THRESHOLD) continue;
     // Based on the paper used for the algorithm, a "peak" is defined as an index
     // whose magnitude is larger than it's two neighbors in each direction (left
     // and right). Supposedly, this should be good enough in practice
@@ -71,7 +70,10 @@ int find_local_peaks(void)
 
     // Ensure we haven't reached the max number of peaks
     // Otherwise, throw error by returning -1
-    if (num_peaks >= MAX_PEAKS) return -1;
+    if (num_peaks >= MAX_PEAKS) {
+      ESP_LOGE(TAG, "Reached maximum number of peaks!");
+      return -1;
+    }
 
     // If past those checks, value is local maxima
     // Store index in peak data array
@@ -127,8 +129,6 @@ int find_local_peaks(void)
 void shift_peaks_int(float shift_factor, float* run_phase_comp_ptr)
 {
   int num_samples = peak_shift_cfg->num_samples;
-  // Check size. Should be num samples (2 * actual FFT size halved for just first reflection)
-  configASSERT( sizeof(run_phase_comp_ptr) >= num_samples * sizeof(float) );
 
   // Start by zero-ing out output FFT array
   // Doubled for real + imag
