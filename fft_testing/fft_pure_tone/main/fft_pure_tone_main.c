@@ -26,6 +26,7 @@
 #define I2S_SAMPLING_FREQ_HZ (40960) // Lower for more even freq resolution
 #define TONE_FREQ_HZ (I2S_SAMPLING_FREQ_HZ / SAMPLES_PER_CYCLE / 2) // A little backwards, but should help even wave
 #define TONE_FREQ_SIN (1.0 * TONE_FREQ_HZ / I2S_SAMPLING_FREQ_HZ) // Sinusoid apparent freq
+#define OUTPUT_VOLUME_DB (-35) // Sound is loud otherwise
 
 #define N_SAMPLES (4096)
 #define I2S_POP_SIZE (TX_BUFFER_LEN) // Play around with size
@@ -291,6 +292,8 @@ void app_main(void)
     // Initiallize ES8388 and I2S channel
     es8388_config();
     es_i2s_init(&tx_handle, &rx_handle, I2S_SAMPLING_FREQ_HZ);
+    // Reduce volume
+    es8388_set_adc_dac_volume(ES_MODULE_DAC, OUTPUT_VOLUME_DB, 0);
 
     ESP_LOGW(TAG, "Channel initiated!");
 

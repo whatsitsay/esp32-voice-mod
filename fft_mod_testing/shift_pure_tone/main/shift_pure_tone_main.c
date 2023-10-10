@@ -107,6 +107,7 @@ static SemaphoreHandle_t xDbgMutex;
 #define SAMPLES_PER_CYCLE (128) // Even for I2S
 #define TONE_FREQ_HZ (I2S_SAMPLING_FREQ_HZ / SAMPLES_PER_CYCLE / 2) // A little backwards, but should help even wave
 #define TONE_FREQ_SIN (1.0 * TONE_FREQ_HZ / I2S_SAMPLING_FREQ_HZ) // Sinusoid apparent freq
+#define TONE_VOLUME_DB (-35) // Sound is loud otherwise
 
 ////// HELPER FUNCTIONS //////
 
@@ -392,6 +393,8 @@ void app_main(void)
     // Initiallize ES8388 and I2S channel
     es8388_config();
     es_i2s_init(&tx_handle, &rx_handle, I2S_SAMPLING_FREQ_HZ);
+    // Reduce volume
+    es8388_set_adc_dac_volume(ES_MODULE_DAC, TONE_VOLUME_DB, 0);
 
     ESP_LOGW(TAG, "Channels initiated!");
 
@@ -525,6 +528,9 @@ void app_main(void)
         i2s_idx ^= 1;
 
         configASSERT( dsp_idx != i2s_idx );
+
+        // Check headphone jack toggle
+        es_toggle_power_amp();
 
         // Set remaining bit
         uxReturn = xEventGroupSync(xTaskSyncBits,

@@ -540,6 +540,9 @@ void app_main(void)
 
         configASSERT( dsp_idx != i2s_idx );
 
+        // Check headphone jack toggle
+        es_toggle_power_amp();
+
         // Set remaining bit
         uxReturn = xEventGroupSync(xTaskSyncBits,
                                    SWAP_COMPLETE_BIT,
