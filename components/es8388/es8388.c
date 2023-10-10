@@ -12,6 +12,8 @@
 #include "math.h"
 
 static const char *ES_TAG = "ES8388_DRIVER";
+#define DAC_VOLUME_DEFAULT_DB (0)
+#define ADC_VOLUME_DEFAULT_DB (-25)
 
 uint8_t es_i2c_write_bulk( uint8_t i2c_bus_addr, uint8_t reg, uint8_t bytes, uint8_t *data)
 {
@@ -150,7 +152,7 @@ esp_err_t es8388_init( es_dac_output_t output, es_adc_input_t input )
     res |= es_write_reg(ES8388_ADDR, ES8388_DACCONTROL20, 0x90); // only right DAC to right mixer enable 0db
     res |= es_write_reg(ES8388_ADDR, ES8388_DACCONTROL21, 0x80); //set internal ADC and DAC use the same LRCK clock, ADC LRCK as internal LRCK
     res |= es_write_reg(ES8388_ADDR, ES8388_DACCONTROL23, 0x00);   //vroi=0
-    res |= es8388_set_adc_dac_volume(ES_MODULE_DAC, 0, 0);          // 0db
+    res |= es8388_set_adc_dac_volume(ES_MODULE_DAC, DAC_VOLUME_DEFAULT_DB, 0);
 
     ESP_LOGW(ES_TAG, "Setting DAC Output: %02x", output );
     res |= es_write_reg(ES8388_ADDR, ES8388_DACPOWER, output );
@@ -165,7 +167,7 @@ esp_err_t es8388_init( es_dac_output_t output, es_adc_input_t input )
     res |= es_write_reg(ES8388_ADDR, ES8388_ADCCONTROL4, 0b10); // 32-bit audio
     res |= es_write_reg(ES8388_ADDR, ES8388_ADCCONTROL5, 0x02);  //ADCFsMode,singel SPEED,RATIO=256
     //ALC for Microphone
-    res |= es8388_set_adc_dac_volume(ES_MODULE_ADC, 0, 0);      // 0db
+    res |= es8388_set_adc_dac_volume(ES_MODULE_ADC, ADC_VOLUME_DEFAULT_DB, 0); 
     res |= es_write_reg(ES8388_ADDR, ES8388_ADCPOWER, 0x00); // Power up all bits, disable low-power mode
 
     return res;
@@ -334,8 +336,7 @@ esp_err_t es_toggle_power_amp()
 {
     // FIXME This should really be in some sort of Audio Kit lib, not here
     // should do for now however
-    // bool headphone_detect = !gpio_get_level(HEADPHONE_DETECT_GPIO);
-    bool headphone_detect = true; // REMOVE ME just for prototyping without speaker
+    bool headphone_detect = !gpio_get_level(HEADPHONE_DETECT_GPIO);
     // Power amp should be set opposite to headphone detect
     gpio_set_level(POWER_AMP_EN_GPIO, (int)(!headphone_detect));
 
