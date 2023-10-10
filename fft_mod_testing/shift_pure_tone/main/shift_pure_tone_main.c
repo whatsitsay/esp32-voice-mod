@@ -424,8 +424,6 @@ void app_main(void)
     // Initialize DSP coefficients (FFT, Hann window)
     init_dsp_coeffs(N, hann_win);
 
-    // Set
-
     // Set peak shift algorithm config
     peak_shift_cfg_t cfg = {
         .num_samples = N,
