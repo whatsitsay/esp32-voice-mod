@@ -90,8 +90,7 @@ EventGroupHandle_t xTaskSyncBits;
 #define SWAP_COMPLETE_BIT ( 1 << 3 )
 #define BUFF_SWAP_BITS (DSP_TASK_BIT | TX_TASK_BIT | RX_TASK_BIT) // Sync to initiate buffer swap
 #define ALL_SYNC_BITS  (BUFF_SWAP_BITS | SWAP_COMPLETE_BIT) // Sync to move on
-// REMOVE ME should be 500
-#define SYNC_TIMEOUT_TICKS  (3000 / portTICK_PERIOD_MS) // Raise error if not synced by this point
+#define SYNC_TIMEOUT_TICKS  (500 / portTICK_PERIOD_MS) // Raise error if not synced by this point
 
 // Semaphores
 static SemaphoreHandle_t xDbgMutex;
@@ -104,7 +103,7 @@ static SemaphoreHandle_t xDbgMutex;
 #define SAMPLES_PER_CYCLE (128) // Even for I2S
 #define TONE_FREQ_HZ (I2S_SAMPLING_FREQ_HZ / SAMPLES_PER_CYCLE / 2) // A little backwards, but should help even wave
 #define TONE_FREQ_SIN (1.0 * TONE_FREQ_HZ / I2S_SAMPLING_FREQ_HZ) // Sinusoid apparent freq
-#define TONE_VOLUME_DB (-25) // Sound is loud otherwise
+#define TONE_VOLUME_DB (-35) // Sound is loud otherwise
 #define PLOT_LEN (SAMPLES_PER_CYCLE * 2)
 static float tone_buffer[HOP_SIZE];
 static float tx_dbg[PLOT_LEN];
@@ -129,13 +128,13 @@ void print_task_stats(void* pvParameters)
         // Calculate average number of peaks "detected" by algorithm
         float num_peaks_avg = num_peaks_sum / loop_count;
         
-        ESP_LOGW(TAG, "Running average DSP calc time: %.4f ms, avg num peaks: %.2f",
+        ESP_LOGI(TAG, "Running average DSP calc time: %.4f ms, avg num peaks: %.2f",
             dsp_calc_time_avg, num_peaks_avg);
-        ESP_LOGW(TAG, "TX overflow hit count: %0d, RX overflow hit count: %0d", tx_ovfl_hit, rx_ovfl_hit);
-        ESP_LOGI(TAG, "Input signal:");
-        dsps_view(tone_buffer, PLOT_LEN, PLOT_LEN / 4, 10, -1 * TONE_AMPL, TONE_AMPL, '*');
-        ESP_LOGI(TAG, "Output signal:");
-        dsps_view(tx_dbg, PLOT_LEN, PLOT_LEN / 4, 10, -1 * TONE_AMPL, TONE_AMPL, '*');
+        ESP_LOGI(TAG, "TX overflow hit count: %0d, RX overflow hit count: %0d", tx_ovfl_hit, rx_ovfl_hit);
+        // ESP_LOGI(TAG, "Input signal:");
+        // dsps_view(tone_buffer, PLOT_LEN, PLOT_LEN / 4, 10, -1 * TONE_AMPL, TONE_AMPL, '*');
+        // ESP_LOGI(TAG, "Output signal:");
+        // dsps_view(tx_dbg, PLOT_LEN, PLOT_LEN / 4, 10, -1 * TONE_AMPL, TONE_AMPL, '*');
 
         // Clear sum and count
         dsp_calc_time_sum = 0;
@@ -172,7 +171,8 @@ void audio_data_modification(int* txBuffer, int* rxBuffer) {
 
         // Dot-product with hann window
         // Downshift to prevent overflow (last 8 bits are always 0)
-        rx_FFT[2 * i] = (float)(rx_val >> I2S_DOWNSHIFT) * hann_win[i];
+        // rx_FFT[2 * i] = (float)(rx_val >> I2S_DOWNSHIFT) * hann_win[i];
+        rx_FFT[2 * i] = (float)(rx_val) * hann_win[i]; // No need to downshift
         // Set imaginary component to 0
         rx_FFT[2 * i + 1] = 0;
     }
@@ -202,7 +202,7 @@ void audio_data_modification(int* txBuffer, int* rxBuffer) {
         // float tx_val = tx_iFFT[2 * i] * hann_win[i]; // Window result (check if needed!;
         float tx_val = tx_iFFT[2 * i]; // No more need for windowing
         txBuffer[2 * i] = (int)(txBuffer_overlap[i] + tx_val); 
-        txBuffer[2 * i] <<= I2S_DOWNSHIFT; // Increase int value
+        txBuffer[2 * i] <<= (32 - TONE_BITS); // Increase int value
         txBuffer[2 * i + 1] = txBuffer[2 * i]; // Copy L and R
 
         // Store TX val to debug array for later comparison
