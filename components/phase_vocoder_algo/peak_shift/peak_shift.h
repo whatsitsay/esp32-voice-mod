@@ -10,7 +10,7 @@
  * 
  */
 
-#define PEAK_THRESHOLD (10) // Empirical TODO double-check
+#define PEAK_THRESHOLD (200000) // Empirical TODO double-check
 
 typedef struct {
   int num_samples;            // Number of samples N per FFT (*full* FFT, not just relevant portion)

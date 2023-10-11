@@ -91,7 +91,7 @@ int find_local_peaks(void)
     {
       // Each region of influence (ROI) will be defined as between the midpoints
       // of each peak
-      int midpoint = (peak_data[num_peaks].idx - peak_data[num_peaks - 1].idx) / 2;
+      int midpoint = (peak_data[num_peaks].idx + peak_data[num_peaks - 1].idx) / 2;
       // Store previous peak right bound as midpoint
       peak_data[num_peaks - 1].right_bound = midpoint;
       // Store current peak left bound as midpoint+1
@@ -146,6 +146,16 @@ void shift_peaks_int(float shift_factor, float* run_phase_comp_ptr)
     int idx_shift = (int)roundf(delta_f_raw / peak_shift_cfg->bin_freq_step);
     int new_roi_start = peak_data[i].left_bound + idx_shift;
     int new_roi_end   = peak_data[i].right_bound + idx_shift;
+    int new_peak_idx  = peak_data[i].idx + idx_shift;
+
+    // Cap at actual boundaries if peak not actually surpassing boundary
+    // TODO: may be worth setting some threshold value...
+    // if (new_roi_start < 0 && new_peak_idx >= 0) {
+    //   new_roi_start = 0;
+    // }
+    // if (new_roi_end   > num_samples/2 && new_peak_idx <= num_samples/2) {
+    //   new_roi_end = num_samples / 2;
+    // }
 
     // Correct frequency change to be this integer increment
     // Should be uncorrected for sampling frequency
