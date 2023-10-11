@@ -11,6 +11,9 @@
     },
     {
       "path": "../fft_mod_testing/shift_pure_tone"
+    },
+    {
+      "path": "../fft_mod_testing/single_shift"
     }
   ],
   "settings": {
