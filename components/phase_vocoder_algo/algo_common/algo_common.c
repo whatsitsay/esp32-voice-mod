@@ -38,14 +38,17 @@ esp_err_t calc_fft(float* data_arr, int num_samples)
 
 void fill_mirror_fft(float* fft_arr, int num_samples)
 {
-  for (int i = 0; i < num_samples; i+= 2)
+  // Start from 2 as max frequency is excluded from even FFT size
+  // Thus, min frequency should be as well
+  for (int i = 2; i < num_samples; i+= 2)
   {
     // For real signals, second half after Nyquist freq will mirror
     // first half, but with complex conjugate.
     // Thus, copy first half of array in reverse order to the end
     // of the array and flip the sign of the imaginary component (2nd)
-    fft_arr[2 * num_samples - 2 - i] = fft_arr[i];
-    fft_arr[2 * num_samples - 1 - i] = fft_arr[i+1] * -1; // Sign flipped for conjugate
+    int mirror_idx = (2 * num_samples) - i;
+    fft_arr[mirror_idx]   = fft_arr[i];
+    fft_arr[mirror_idx+1] = fft_arr[i+1] * -1; // Sign flipped for conjugate
   }
 }
 

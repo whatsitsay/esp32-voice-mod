@@ -36,7 +36,7 @@ void reset_phase_comp_arr(float* run_phase_comp_ptr)
 {
   // Increment by two for real + imag
   // However, *don't* double size as we only need the first half
-  for (int i = 0; i < peak_shift_cfg->num_samples; i += 2)
+  for (int i = 0; i <= peak_shift_cfg->num_samples; i += 2)
   {
     run_phase_comp_ptr[i]   = 1;
     run_phase_comp_ptr[i+1] = 0;
@@ -50,12 +50,13 @@ int find_local_peaks(void)
 
   // Fill magnitude buffer
   // Use half size to save memory/cycles (given it's for real signal)
-  calc_fft_mag(peak_shift_cfg->fft_ptr, peak_shift_cfg->fft_mag_ptr, peak_shift_cfg->num_samples / 2);
+  // +1 for midpoint (Nyquist freq)
+  calc_fft_mag(peak_shift_cfg->fft_ptr, peak_shift_cfg->fft_mag_ptr, peak_shift_cfg->num_samples / 2 + 1);
 
   // Iterate over magnitude array for indicies within bounds of peak detection,
   // defined below
   // Only iterate through half of FFT, as it will be reflected by midpoint (Nyquist freq)
-  for (int i = NUM_NEIGHBORS; i < peak_shift_cfg->num_samples / 2 - NUM_NEIGHBORS; i++)
+  for (int i = NUM_NEIGHBORS; i <= peak_shift_cfg->num_samples / 2 - NUM_NEIGHBORS; i++)
   {
     float check_val = peak_shift_cfg->fft_mag_ptr[i];
     // First ensure check val is over threshold, to prevent noise
@@ -120,7 +121,7 @@ int find_local_peaks(void)
   // Again, this will be the midpoint due to reflection
   if (num_peaks > 0)
   {
-    peak_data[num_peaks-1].right_bound = (peak_shift_cfg->num_samples/2)-1;
+    peak_data[num_peaks-1].right_bound = (peak_shift_cfg->num_samples/2);
   }
  
   return num_peaks;
@@ -161,8 +162,8 @@ void shift_peaks_int(float shift_factor, float* run_phase_comp_ptr)
     for (int j = 2 * new_roi_start; j <= 2 * new_roi_end; j += 2)
     {
       // Check if boundary has been hit
-      int new_idx = (j < 0)            ? -1 * j : // Reflect back along origin
-                    (j >= num_samples) ? (2 * num_samples) - j : // Reflect along upper boundary
+      int new_idx = (j < 0)           ? -1 * j : // Reflect back along origin
+                    (j > num_samples) ? (2 * num_samples) - j : // Reflect along upper boundary
                     j; // Use index as-is
       bool hit_boundary = new_idx != j;
 

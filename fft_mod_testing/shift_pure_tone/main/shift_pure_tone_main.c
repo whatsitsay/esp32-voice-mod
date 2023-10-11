@@ -39,10 +39,10 @@ __attribute__((aligned(16))) float hann_win[N_SAMPLES];
 __attribute__((aligned(16))) float rx_FFT[N_SAMPLES * 2]; // Will be complex
 __attribute__((aligned(16))) float tx_iFFT[N_SAMPLES * 2];
 // Peak shift buffers
-// Size is only N_SAMPLES as they only pertain to *first half* of FFT
-__attribute__((aligned(16))) float prev_rx_FFT[N_SAMPLES]; // Needed for instantaneous angle calc
-__attribute__((aligned(16))) float rx_FFT_mag[N_SAMPLES/2]; // Needed for peak shifting
-__attribute__((aligned(16))) float run_phase_comp[N_SAMPLES]; // Cumulative phase compensation buffer
+#define FFT_MOD_SIZE (N_SAMPLES/2 + 1) // +1 for midpoint N/2
+__attribute__((aligned(16))) float prev_rx_FFT[2 * FFT_MOD_SIZE]; // Needed for instantaneous angle calc
+__attribute__((aligned(16))) float rx_FFT_mag[FFT_MOD_SIZE]; // Needed for peak shifting
+__attribute__((aligned(16))) float run_phase_comp[2 * FFT_MOD_SIZE]; // Cumulative phase compensation buffer
 
 // Stats trackers
 static unsigned int loop_count  = 0;
@@ -90,7 +90,8 @@ EventGroupHandle_t xTaskSyncBits;
 #define SWAP_COMPLETE_BIT ( 1 << 3 )
 #define BUFF_SWAP_BITS (DSP_TASK_BIT | TX_TASK_BIT | RX_TASK_BIT) // Sync to initiate buffer swap
 #define ALL_SYNC_BITS  (BUFF_SWAP_BITS | SWAP_COMPLETE_BIT) // Sync to move on
-#define SYNC_TIMEOUT_TICKS  (500 / portTICK_PERIOD_MS) // Raise error if not synced by this point
+// REMOVE ME should be 500
+#define SYNC_TIMEOUT_TICKS  (3000 / portTICK_PERIOD_MS) // Raise error if not synced by this point
 
 // Semaphores
 static SemaphoreHandle_t xDbgMutex;
@@ -103,7 +104,7 @@ static SemaphoreHandle_t xDbgMutex;
 #define SAMPLES_PER_CYCLE (128) // Even for I2S
 #define TONE_FREQ_HZ (I2S_SAMPLING_FREQ_HZ / SAMPLES_PER_CYCLE / 2) // A little backwards, but should help even wave
 #define TONE_FREQ_SIN (1.0 * TONE_FREQ_HZ / I2S_SAMPLING_FREQ_HZ) // Sinusoid apparent freq
-#define TONE_VOLUME_DB (-35) // Sound is loud otherwise
+#define TONE_VOLUME_DB (-25) // Sound is loud otherwise
 #define PLOT_LEN (SAMPLES_PER_CYCLE * 2)
 static float tone_buffer[HOP_SIZE];
 static float tx_dbg[PLOT_LEN];
