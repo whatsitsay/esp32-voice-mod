@@ -95,7 +95,7 @@ EventGroupHandle_t xTaskSyncBits;
 // Semaphores
 static SemaphoreHandle_t xDbgMutex;
 
-#define SHIFT_FACTOR (1.0)
+#define SHIFT_FACTOR (2.0)
 
 // Tone parameters
 #define TONE_BITS (24)
