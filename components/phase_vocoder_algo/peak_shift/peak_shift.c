@@ -167,12 +167,12 @@ void shift_peaks_int(float shift_factor, float* run_phase_comp_ptr)
   // Doubled for real + imag
   memset(peak_shift_cfg->fft_out_ptr, 0, num_samples * sizeof(float) * 2);
 
-  // Next, copy everything up to first left bound as-is
+  // Otherwise, copy everything up to first left bound as-is
   // This is due to lower-frequency noise from windowing
-  int copied_data_points = peak_data[0].left_bound-1;
-  if (copied_data_points > 0) {
-    size_t init_fft_size = copied_data_points * 2 * sizeof(float); // x2 for imag+real
-    memcpy(peak_shift_cfg->fft_out_ptr, peak_shift_cfg->fft_ptr, init_fft_size);
+  // Doubled for real + imag
+  for (int i = 0; i < 2 * peak_data[0].left_bound; i++)
+  {
+    peak_shift_cfg->fft_out_ptr[i] = peak_shift_cfg->fft_ptr[i];
   }
 
   // Iterate through all ROI

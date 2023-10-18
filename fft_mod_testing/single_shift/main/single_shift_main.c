@@ -96,12 +96,18 @@ EventGroupHandle_t xTaskSyncBits;
 static SemaphoreHandle_t xDbgMutex;
 
 #define SHIFT_FACTOR (1.0)
+#define PLOT_LEN (128)
+__attribute__((aligned(16))) float tx_FFT_mag[PLOT_LEN]; // For debug only
 
 ////// HELPER FUNCTIONS //////
 
 void print_task_stats(void* pvParameters)
 {
     const char* TAG = "Task Stats";
+    float* rx_FFT_mag_cpy = (float *)malloc(PLOT_LEN * sizeof(float));
+    float* tx_FFT_mag_cpy = (float *)malloc(PLOT_LEN * sizeof(float));
+
+    configASSERT( (rx_FFT_mag_cpy != NULL) && (tx_FFT_mag != NULL) );
 
     while (1) {
         vTaskDelay(3000 / portTICK_PERIOD_MS);
@@ -120,18 +126,27 @@ void print_task_stats(void* pvParameters)
         ESP_LOGI(TAG, "Running average DSP calc time: %.4f ms, avg num peaks: %.2f",
             dsp_calc_time_avg, num_peaks_avg);
         ESP_LOGI(TAG, "TX overflow hit count: %0d, RX overflow hit count: %0d", tx_ovfl_hit, rx_ovfl_hit);
-        // ESP_LOGI(TAG, "Input signal:");
-        // dsps_view(tone_buffer, PLOT_LEN, PLOT_LEN / 4, 10, -1 * TONE_AMPL, TONE_AMPL, '*');
-        // ESP_LOGI(TAG, "Output signal:");
-        // dsps_view(tx_dbg, PLOT_LEN, PLOT_LEN / 4, 10, -1 * TONE_AMPL, TONE_AMPL, '*');
 
         // Clear sum and count
         dsp_calc_time_sum = 0;
         loop_count = 0;
         num_peaks_sum = 0;
 
+        // Copy magnitude buffers
+        memcpy(rx_FFT_mag_cpy, rx_FFT_mag, PLOT_LEN * sizeof(float));
+        memcpy(tx_FFT_mag_cpy, tx_FFT_mag, PLOT_LEN * sizeof(float));
+
+        // Print local peaks
+        print_local_peaks();
+
         // Release mutex
         xSemaphoreGive(xDbgMutex);
+
+        // Plot magnitudes
+        ESP_LOGI(TAG, "Input FT magnitude (dB):");
+        dsps_view(rx_FFT_mag_cpy, PLOT_LEN, PLOT_LEN, 10, 0, 40, 'x');
+        ESP_LOGI(TAG, "Output FT magnitude (dB):");
+        dsps_view(tx_FFT_mag_cpy, PLOT_LEN, PLOT_LEN, 10, 0, 40, 'o');
     }
 }
 
@@ -175,7 +190,13 @@ void audio_data_modification(int* txBuffer, int* rxBuffer) {
 
     // Perform peak shift, if there are any peaks
     if (num_peaks > 0) shift_peaks_int(SHIFT_FACTOR, run_phase_comp); 
-    else reset_phase_comp_arr(run_phase_comp); // If no peaks, reset running phase compensation
+    else {
+        memcpy(tx_iFFT, rx_FFT, FFT_MOD_SIZE * 2 * sizeof(int)); // Copy RX->TX
+        reset_phase_comp_arr(run_phase_comp); // If no peaks, reset running phase compensation
+    }
+
+    // Calculate magnitudes
+    calc_fft_mag_db(tx_iFFT, tx_FFT_mag, PLOT_LEN);
 
     // Fill latter half of FFT with conjugate mirror data
     fill_mirror_fft(tx_iFFT, N);

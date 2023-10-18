@@ -84,7 +84,7 @@ void calc_fft_mag_db(float* fft_arr, float* fft_mag, int num_samples)
     float real = fft_arr[2 * i];
     float imag = fft_arr[2 * i + 1];
 
-    float mag_raw = sqrtf(powf(real, 2) + powf(imag, 2)) / num_samples;
+    float mag_raw = sqrtf(powf(real, 2) + powf(imag, 2));
 
     fft_mag[i] = 10 * log10f(mag_raw / FFT_DB_BASE);
   }
