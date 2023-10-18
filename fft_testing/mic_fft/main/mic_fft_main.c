@@ -4,122 +4,311 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <string.h>
 #include <inttypes.h>
 #include "sdkconfig.h"
 #include "esp_err.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "driver/i2s_std.h"
 #include "driver/gpio.h"
 
 #include "esp_dsp.h"
 
+// Local libraries
+#include <es8388.h>
+#include <algo_common.h>
+#include <peak_shift.h>
+
+// Plot macros
+#define PLOT_LEN (128)
+
+// Number of samples
+#define N_SAMPLES (4096)
+#define HOP_SIZE (N_SAMPLES) // No overlap here, just data gathering
+#define HOP_BUFFER_SIZE_B (2 * HOP_SIZE * 4) // == length of rx/tx buffers (bytes)
+// rx/tx buffers. Size doubled for L+R (even if only R is used)
+int N = N_SAMPLES;
+
 // Local macros
 #define I2S_SAMPLING_FREQ_HZ (40960) // Lower for more even freq resolution
-// Number of sample buffers per FFT calc
-#define FFT_SAMPLING_COUNT (5)
+#define I2S_DOWNSHIFT (8) // 24-bit precision, can downshift safely by byte for FFT calcs
+
+i2s_chan_handle_t rx_handle, tx_handle;
 
 // Allocate buffer
 #define BYTES_PER_SAMPLE (4) // According to spec, 32bits/word
-#define RX_BUFFER_LEN (4096) // Needs to be power of 2 for DSP lib
-int rxBuffer[RX_BUFFER_LEN * 2]; // x2 for L + R channels
+#define RX_BUFFER_LEN (N_SAMPLES) // Needs to be power of 2 for DSP lib
+static int rxBuffer[RX_BUFFER_LEN * 2]; // x2 for L + R channels
+static int txBuffer[RX_BUFFER_LEN * 2]; // x2 for L + R channels
+static unsigned int rx_ovfl_hit = 0;
+static unsigned int full_data_rcvd = 0;
 
 // FFT buffers
 __attribute__((aligned(16))) float hann_win[RX_BUFFER_LEN];
 __attribute__((aligned(16))) float rx_FFT[RX_BUFFER_LEN * 2]; // Will be complex
-float rx_FFT_mag_raw[RX_BUFFER_LEN/2]; // dB magnitude. Half for relevant portion
 
-static const char *TAG = "main";
+#define FFT_MOD_SIZE (N_SAMPLES/2 + 1) // +1 for midpoint N/2
+__attribute__((aligned(16))) float prev_rx_FFT[2 * FFT_MOD_SIZE]; // Needed for instantaneous angle calc
+__attribute__((aligned(16))) float rx_FFT_mag[FFT_MOD_SIZE]; // Needed for peak shifting
+__attribute__((aligned(16))) float run_phase_comp[2 * FFT_MOD_SIZE]; // Cumulative phase compensation buffer
+
+// RX task attributes
+static TaskHandle_t xRxTaskHandle, xTxTaskHandle;
+static SemaphoreHandle_t RxBufMutex;
+#define RX_TASK_STACK_SIZE (4096u) // Check watermark!
+#define RX_TASK_CORE (1)
+#define RX_TASK_PRIORITY (10U)
+#define TX_TASK_STACK_SIZE (4096u) // Check watermark!
+#define TX_TASK_CORE (1)
+#define TX_TASK_PRIORITY (10U) // Higher due to it being blocked
+
+/**
+ * @brief Callback for TX send completion. Will send notification to I2S
+ * transmit task to push data.
+ * 
+ * @param handle I2S channel handle (TX in this case)
+ * @param event Event data
+ * @param user_ctx User data
+ * @return IRAM_ATTR False
+ */
+static IRAM_ATTR bool tx_sent_callback(i2s_chan_handle_t handle, i2s_event_data_t *event, void *user_ctx)
+{
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
+    // Set task notification for filler task to continue
+    configASSERT( xTxTaskHandle != NULL );
+    vTaskNotifyGiveFromISR(xTxTaskHandle, &xHigherPriorityTaskWoken);
+
+    portYIELD_FROM_ISR( xHigherPriorityTaskWoken );
+
+    return false; // FIXME what does this boolean indicate? Docs not clear
+}
+
+/**
+ * @brief Callback for RX received event. Will send notification
+ * to I2S receive task to pop data.
+ * 
+ * @param handle I2S channel handle (RX in this case)
+ * @param event Event data
+ * @param user_ctx User data
+ * @return IRAM_ATTR False
+ */
+static IRAM_ATTR bool rx_rcvd_callback(i2s_chan_handle_t handle, i2s_event_data_t *event, void *user_ctx)
+{
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
+    // Set task notification for RX task to continue
+    configASSERT( xRxTaskHandle != NULL );
+    vTaskNotifyGiveFromISR(xRxTaskHandle, &xHigherPriorityTaskWoken);
+
+    portYIELD_FROM_ISR( xHigherPriorityTaskWoken );
+    
+    return false;
+}
+
+/**
+ * @brief Callback for RX receive queue overflow. Increments running counter.
+ * 
+ * @param handle I2S channel handle (TX in this case)
+ * @param event Event data
+ * @param user_ctx User data
+ * @return IRAM_ATTR False
+ */
+static IRAM_ATTR bool rx_rcvd_overflow(i2s_chan_handle_t handle, i2s_event_data_t *event, void *user_ctx)
+{
+    rx_ovfl_hit++;
+    
+    return false;
+}
+
+void i2s_receive(void* pvParameters)
+{
+    static const char *TAG = "I2S receive";
+
+    int* stream_data = (int *)pvParameters;
+
+    configASSERT( rx_handle != NULL );
+    configASSERT( stream_data != NULL );
+
+    // Enable RX channel
+    ESP_ERROR_CHECK(i2s_channel_enable(rx_handle));
+
+    while (1) {
+        size_t data_received = 0;
+
+        // Wait for sent notification
+        (void) ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
+        // Read from I2S buffer
+        i2s_channel_read(rx_handle, stream_data, HOP_BUFFER_SIZE_B, &data_received, 500 / portTICK_PERIOD_MS);
+        if (data_received != HOP_BUFFER_SIZE_B) {
+            ESP_LOGE(TAG, "Only read %d out of %d bytes from I2S buffer", data_received, HOP_BUFFER_SIZE_B);
+            if (data_received == 0) continue;
+        }
+        else
+        {
+            full_data_rcvd++;
+        }
+
+        // Get semaphore
+        if (xSemaphoreTake(RxBufMutex, 500 / portMAX_DELAY) != pdTRUE) {
+            ESP_LOGE(TAG, "Failed to get mic buffer mutex");
+        }
+        // Copy buffer into rxBuffer
+        memcpy(rxBuffer, stream_data, data_received);
+
+        // Release semaphore
+        xSemaphoreGive(RxBufMutex);
+    }
+}
+
+// Dummy function for full use of buffer
+void i2s_transmit(void* pvParameters)
+{
+    static const char *TAG = "I2S transmit";
+
+    configASSERT( tx_handle != NULL );
+    
+    // Enable TX channel
+    ESP_ERROR_CHECK(i2s_channel_enable(tx_handle));
+
+    while (1) {
+        size_t data_written = 0;
+
+        int* stream_data = txBuffer;
+
+        // Write to I2S buffer
+        // No error check here to allow for partial writes
+        i2s_channel_write(tx_handle, stream_data, HOP_BUFFER_SIZE_B, &data_written, 300 / portTICK_PERIOD_MS);
+        if (data_written != HOP_BUFFER_SIZE_B) {
+            ESP_LOGE(TAG, "Only wrote %d out of %d bytes to I2S buffer", data_written, HOP_BUFFER_SIZE_B);
+        }
+
+        (void) ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    }
+}
 
 void app_main(void)
 {
-    ESP_LOGI(TAG, "Initializing microphone I2S interface...");
+    static const char *TAG = "main";
+    // Initiallize ES8388 and I2S channel
+    es8388_config();
+    es_i2s_init(&tx_handle, &rx_handle, I2S_SAMPLING_FREQ_HZ);
+    // Set ADC volume to 0 dB for full sensitivity
+    es8388_set_adc_dac_volume(ES_MODULE_ADC, 0, 0);
 
-    i2s_chan_handle_t mic_handle;
-    // Init channel
-    i2s_chan_config_t mic_chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
-    i2s_new_channel(&mic_chan_cfg, NULL, &mic_handle);
-
-    // Initialize config
-    i2s_std_config_t mic_cfg = {
-        .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(I2S_SAMPLING_FREQ_HZ),
-        .slot_cfg = I2S_STD_MSB_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_STEREO),
-        .gpio_cfg = {
-            .mclk = I2S_GPIO_UNUSED,
-            .bclk = GPIO_NUM_27,
-            .ws   = GPIO_NUM_33,
-            .dout = I2S_GPIO_UNUSED,
-            .din  = GPIO_NUM_32,
-            .invert_flags = {
-                .mclk_inv = false,
-                .bclk_inv = false,
-                .ws_inv   = false,
-            }
-        }
+    // Instantiate I2S callbacks
+    i2s_event_callbacks_t cbs = {
+        .on_recv = rx_rcvd_callback,
+        .on_recv_q_ovf = rx_rcvd_overflow,
+        .on_sent = tx_sent_callback,
+        .on_send_q_ovf = NULL,
     };
-    ESP_ERROR_CHECK(i2s_channel_init_std_mode(mic_handle, &mic_cfg));
-    ESP_ERROR_CHECK(i2s_channel_enable(mic_handle));
+    ESP_ERROR_CHECK(i2s_channel_register_event_callback(rx_handle, &cbs, NULL));
+    ESP_ERROR_CHECK(i2s_channel_register_event_callback(tx_handle, &cbs, NULL));
 
-    ESP_LOGI(TAG, "Finished initiating mic I2S, setting up FFT coefficients");
-    // Generate sin/cos coefficients for FFT calculations
-    ESP_ERROR_CHECK(dsps_fft2r_init_fc32(NULL, RX_BUFFER_LEN));
+    // Initialize DSP coefficients (FFT, Hann window)
+    init_dsp_coeffs(N, hann_win);
 
-    // Generate Hann window coefficients
-    dsps_wind_hann_f32(hann_win, RX_BUFFER_LEN);
+    // Set peak shift algorithm config
+    peak_shift_cfg_t cfg = {
+        .num_samples = N,
+        .hop_size    = HOP_SIZE,
+        .bin_freq_step = 1.0 * I2S_SAMPLING_FREQ_HZ / N_SAMPLES,
+        .fft_ptr = rx_FFT,
+        .fft_prev_ptr = prev_rx_FFT,
+        .fft_mag_ptr = rx_FFT_mag,
+        .fft_out_ptr = NULL,
+    };
+    init_peak_shift_cfg(&cfg);
+
+    // Reset phase compensation buffer
+    reset_phase_comp_arr(run_phase_comp);
+
+    // Create mutex for debug buffers
+    RxBufMutex = xSemaphoreCreateMutex();
+
+    int* stream_data = (int *)malloc(sizeof(rxBuffer));
+
+    // Create RX task
+    BaseType_t xReturned = xTaskCreatePinnedToCore(
+        i2s_receive, 
+        "I2S Receive Task",
+        RX_TASK_STACK_SIZE,
+        (void *)stream_data,
+        RX_TASK_PRIORITY,
+        &xRxTaskHandle,
+        RX_TASK_CORE
+    );
+
+    // Create TX task
+    xReturned |= xTaskCreatePinnedToCore(
+        i2s_transmit, 
+        "I2S Transmit Task",
+        TX_TASK_STACK_SIZE,
+        NULL,
+        TX_TASK_PRIORITY,
+        &xTxTaskHandle,
+        TX_TASK_CORE
+    );
+
+    if ( xReturned != pdPASS )
+    {
+        ESP_LOGE(TAG, "Failed to create tasks! Error: %d. Restarting ESP in 5 seconds...", xReturned);
+        vTaskDelay(5000 / portTICK_PERIOD_MS);
+        esp_restart();
+    }
     
     // Main loop
     while (1) {
-        size_t bytes_read = 0;
-        esp_err_t ret_val;
+        // Delay every second or so
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
 
-        for (int i = 0; i < FFT_SAMPLING_COUNT; i++) {
-            // Perform read
-            ret_val = i2s_channel_read(mic_handle, &rxBuffer, sizeof(rxBuffer), &bytes_read, 5000);
+        // Copy to previous FFT array
+        memcpy(prev_rx_FFT, rx_FFT, sizeof(prev_rx_FFT));
 
-            if (ret_val != ESP_OK || bytes_read != sizeof(rxBuffer)) {
-                ESP_LOGW(TAG, "Read failed! Err code %d, %d bytes read", (int)ret_val, bytes_read);
-                continue;
-            }
+        // Grab mutex
+        if (xSemaphoreTake(RxBufMutex, portMAX_DELAY) != pdTRUE) {
+            ESP_LOGE(TAG, "Failed to get mic buffer mutex");
+            return;
         }
 
         // Fill FFT buff with last sample
         for (int i = 0; i < RX_BUFFER_LEN; i++) {
             // Cast to signed int
             // Skip every other, as it should only be L channel with data
-            int rx_val = rxBuffer[2 * i];
-            // Cut out lower 8 bits and convert to float
-            // Avoids overflow
-            float rx_f = (float)(rx_val / 256);
+            float rx_f = (float)(rxBuffer[2 * i] >> I2S_DOWNSHIFT);
             
             // Dot-multiply with Hann windows to reduce effect of edges
             rx_FFT[2 * i] = rx_f * hann_win[i];
             rx_FFT[2 * i + 1] = 0; // No complex component
         }
 
+        // Give back mutex
+        xSemaphoreGive(RxBufMutex);
+
         // Calculate FFT, profile cycle count
         unsigned int start_b = dsp_get_cpu_cycle_count();
-        dsps_fft2r_fc32_ae32(rx_FFT, RX_BUFFER_LEN);
+        ESP_ERROR_CHECK(calc_fft(rx_FFT, RX_BUFFER_LEN));
         unsigned int end_b = dsp_get_cpu_cycle_count();
         float fft_comp_time_ms = (float)(end_b - start_b)/240e3;
 
-        // Bit reverse
-        dsps_bit_rev_fc32(rx_FFT, RX_BUFFER_LEN);
-        // Convert to two complex vectors
-        // Accounts for complex conjugate symmetry
-        dsps_cplx2reC_fc32(rx_FFT, RX_BUFFER_LEN);
-
-        // Calculate amplitude in dB
-        for (int i = 0; i < RX_BUFFER_LEN / 2; i++) {
-            float re_val = rx_FFT[i * 2];
-            float im_val = rx_FFT[i * 2 + 1];
-
-            rx_FFT_mag_raw[i] = sqrtf((re_val * re_val) + (im_val * im_val))/(float)RX_BUFFER_LEN;
-        }
+        // Find local peaks
+        find_local_peaks();
         
         // Show results
-        ESP_LOGI(TAG, "Mic spectra magnitude (raw) (up to < 3 kHz)");
-        dsps_view(rx_FFT_mag_raw, 256, 128, 10, 0, 2500000, '|');
+        ESP_LOGE(TAG, "\n\nMic spectra magnitude (dB)");
+        for (int i = 0; i < N/4; i += PLOT_LEN)
+        {
+            ESP_LOGI(TAG, "%d - %d Hz", i * 10, (PLOT_LEN - 1 + i) * 10);
+            dsps_view(&rx_FFT_mag[i], PLOT_LEN, 128, 10, 0, 30, 'x');
+        }
         ESP_LOGI(TAG, "FFT for %i complex points take %i cycles (%.3f ms)", RX_BUFFER_LEN, end_b - start_b, fft_comp_time_ms);
+        ESP_LOGI(TAG, "RX overflow count = %d, all data received count = %d", rx_ovfl_hit, full_data_rcvd);
+        // Print local peaks
+        print_local_peaks();
     }
 
     // If this point is hit, wait some time then restart

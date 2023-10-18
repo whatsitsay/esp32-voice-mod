@@ -78,13 +78,15 @@ esp_err_t inv_fft(float* fft_arr, int num_samples)
     return resp;
 }
 
-void calc_fft_mag(float* fft_arr, float* fft_mag, int num_samples)
+void calc_fft_mag_db(float* fft_arr, float* fft_mag, int num_samples)
 {
   for (int i = 0; i < num_samples; i++) {
     float real = fft_arr[2 * i];
     float imag = fft_arr[2 * i + 1];
 
-    fft_mag[i] = sqrtf(powf(real, 2) + powf(imag, 2)) / num_samples;
+    float mag_raw = sqrtf(powf(real, 2) + powf(imag, 2)) / num_samples;
+
+    fft_mag[i] = 10 * log10f(mag_raw / FFT_DB_BASE);
   }
 }
 

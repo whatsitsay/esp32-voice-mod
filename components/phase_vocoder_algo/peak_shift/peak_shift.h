@@ -10,7 +10,7 @@
  * 
  */
 
-#define PEAK_THRESHOLD (200000) // Empirical TODO double-check
+#define PEAK_THRESHOLD_DB (20) // Empirical TODO double-check
 
 typedef struct {
   int num_samples;            // Number of samples N per FFT (*full* FFT, not just relevant portion)
@@ -30,7 +30,7 @@ typedef struct {
   float phase;          // Phase value of peak
 } peak_data_t;
 
-#define MAX_PEAKS (100) // Somewhat of a fudge factor to limit memory footprint
+#define MAX_PEAKS (50) // Somewhat of a fudge factor to limit memory footprint
 
 /**
  * @brief Store peak shift algorithm configuration and pointers
@@ -70,6 +70,12 @@ void reset_phase_comp_arr(float* run_phase_comp_ptr);
  * @return Number of peaks found in magnitude array, -1 if MAX was surpassed
  */
 int find_local_peaks(void);
+
+/**
+ * @brief Print local peaks logged during "find_local_peaks" method
+ * 
+ */
+void print_local_peaks(void);
 
 
 /**

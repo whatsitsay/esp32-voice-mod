@@ -14,6 +14,9 @@
     },
     {
       "path": "../fft_mod_testing/single_shift"
+    },
+    {
+      "path": "../fft_testing/mic_fft"
     }
   ],
   "settings": {
