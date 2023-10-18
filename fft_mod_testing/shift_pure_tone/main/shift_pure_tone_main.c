@@ -95,7 +95,7 @@ EventGroupHandle_t xTaskSyncBits;
 // Semaphores
 static SemaphoreHandle_t xDbgMutex;
 
-#define SHIFT_FACTOR (2.0)
+#define SHIFT_FACTOR (0.5)
 
 // Tone parameters
 #define TONE_BITS (24)
@@ -104,9 +104,9 @@ static SemaphoreHandle_t xDbgMutex;
 #define TONE_FREQ_HZ (I2S_SAMPLING_FREQ_HZ / SAMPLES_PER_CYCLE / 2) // A little backwards, but should help even wave
 #define TONE_FREQ_SIN (1.0 * TONE_FREQ_HZ / I2S_SAMPLING_FREQ_HZ) // Sinusoid apparent freq
 #define TONE_VOLUME_DB (-35) // Sound is loud otherwise
-#define PLOT_LEN (SAMPLES_PER_CYCLE * 2)
+#define PLOT_LEN (128)
 static float tone_buffer[HOP_SIZE];
-static float tx_dbg[PLOT_LEN];
+__attribute__((aligned(16))) float tx_FFT_mag[PLOT_LEN]; // For comparison
 
 ////// HELPER FUNCTIONS //////
 
@@ -127,14 +127,15 @@ void print_task_stats(void* pvParameters)
         float dsp_calc_time_avg = dsp_calc_time_sum / loop_count;
         // Calculate average number of peaks "detected" by algorithm
         float num_peaks_avg = num_peaks_sum / loop_count;
-        
+
         ESP_LOGI(TAG, "Running average DSP calc time: %.4f ms, avg num peaks: %.2f",
             dsp_calc_time_avg, num_peaks_avg);
         ESP_LOGI(TAG, "TX overflow hit count: %0d, RX overflow hit count: %0d", tx_ovfl_hit, rx_ovfl_hit);
-        // ESP_LOGI(TAG, "Input signal:");
-        // dsps_view(tone_buffer, PLOT_LEN, PLOT_LEN / 4, 10, -1 * TONE_AMPL, TONE_AMPL, '*');
-        // ESP_LOGI(TAG, "Output signal:");
-        // dsps_view(tx_dbg, PLOT_LEN, PLOT_LEN / 4, 10, -1 * TONE_AMPL, TONE_AMPL, '*');
+        ESP_LOGI(TAG, "Input FT magnitude (dB):");
+        dsps_view(rx_FFT_mag, PLOT_LEN, PLOT_LEN, 10, 0, 40, 'x');
+        ESP_LOGI(TAG, "Output FT magnitude (dB):");
+        dsps_view(tx_FFT_mag, PLOT_LEN, PLOT_LEN, 10, 0, 40, 'o');
+        print_local_peaks();
 
         // Clear sum and count
         dsp_calc_time_sum = 0;
@@ -189,6 +190,9 @@ void audio_data_modification(int* txBuffer, int* rxBuffer) {
     if (num_peaks > 0) shift_peaks_int(SHIFT_FACTOR, run_phase_comp); 
     else reset_phase_comp_arr(run_phase_comp); // If no peaks, reset running phase compensation
 
+    // Calculate magnitudes for output FFT (debug)
+    calc_fft_mag_db(tx_iFFT, tx_FFT_mag, PLOT_LEN);
+
     // Fill latter half of FFT with conjugate mirror data
     fill_mirror_fft(tx_iFFT, N);
 
@@ -204,11 +208,6 @@ void audio_data_modification(int* txBuffer, int* rxBuffer) {
         txBuffer[2 * i] = (int)(txBuffer_overlap[i] + tx_val); 
         txBuffer[2 * i] <<= (32 - TONE_BITS); // Increase int value
         txBuffer[2 * i + 1] = txBuffer[2 * i]; // Copy L and R
-
-        // Store TX val to debug array for later comparison
-        if (i < PLOT_LEN) {
-            tx_dbg[i] = (txBuffer_overlap[i] + tx_val) * 256;
-        }
 
         // Store latter portion for use next loop
         // float tx_overlap_val = tx_iFFT[2 * (i + HOP_SIZE)] * hann_win[i + HOP_SIZE];
