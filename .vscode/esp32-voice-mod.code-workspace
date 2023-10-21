@@ -17,6 +17,12 @@
     },
     {
       "path": "../fft_testing/mic_fft"
+    },
+    {
+      "path": "../conv_effects/delay_chorus"
+    },
+    {
+      "path": "../iterative_effects/delay_chorus_iter"
     }
   ],
   "settings": {
