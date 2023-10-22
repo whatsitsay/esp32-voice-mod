@@ -115,6 +115,13 @@ void mult_complex(float x_real, float x_imag, float y_real, float y_imag, float*
   *prod_imag = (x_real * y_imag) + (x_imag * y_real);
 }
 
+void divide_complex(float x_real, float x_imag, float y_real, float y_imag, float* div_real, float* div_imag)
+{
+  float den = (y_real * y_real)+ (y_imag * y_imag);
+  *div_real = ((x_real * y_real) + (x_imag * y_imag)) / den;
+  *div_imag = ((x_imag * y_real) - (x_real * y_imag)) / den;
+}
+
 void polar_to_complex(float mag, float angle, float* cpx_real, float* cpx_imag)
 {
   // Real is the cosine of the angle, imaginary the sine

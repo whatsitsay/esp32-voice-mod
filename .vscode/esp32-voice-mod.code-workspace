@@ -23,6 +23,9 @@
     },
     {
       "path": "../iterative_effects/delay_chorus_iter"
+    },
+    {
+      "path": "../conv_effects/schroeder_reverb"
     }
   ],
   "settings": {

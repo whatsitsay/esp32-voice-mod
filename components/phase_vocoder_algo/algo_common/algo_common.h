@@ -105,6 +105,18 @@ void calc_fft_phase(float* fft_arr, float* fft_phase, int num_samples);
 void mult_complex(float x_real, float x_imag, float y_real, float y_imag, float* prod_real, float* prod_imag);
 
 /**
+ * @brief Helper function for dividing two complex numbers and storing the result into pointers
+ * 
+ * @param x_real - First complex number, real component
+ * @param x_imag - First complex number, imaginary component
+ * @param y_real - Second complex number, real component
+ * @param y_imag - Second complex number, imaginary component
+ * @param div_real - Division real component (output)
+ * @param div_imag - Division imaginary component (output)
+ */
+void divide_complex(float x_real, float x_imag, float y_real, float y_imag, float* div_real, float* div_imag);
+
+/**
  * @brief Convert polar coordinates (magnitude/angle) into complex cartesian (real/imagary)
  * 
  * @param mag - Magnitude/radius
