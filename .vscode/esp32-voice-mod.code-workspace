@@ -26,6 +26,9 @@
     },
     {
       "path": "../conv_effects/schroeder_reverb"
+    },
+    {
+      "path": "../iterative_effects/schroeder_reverb_iter"
     }
   ],
   "settings": {
