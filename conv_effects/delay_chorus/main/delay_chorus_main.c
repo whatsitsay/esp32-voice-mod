@@ -38,14 +38,10 @@ __attribute__((aligned(16))) float hann_win[N_SAMPLES];
 __attribute__((aligned(16))) float rx_FFT[N_SAMPLES * 2]; // Will be complex
 __attribute__((aligned(16))) float tx_iFFT[N_SAMPLES * 2];
 
-// HPF to avoid DC noise
-#define ATTENUATION_0HZ  (1.0)
-#define ATTENUATION_10HZ (1.0)
-
 // Chorus effect macros/buffers
-#define BASE_DELAY_MS    (30.0)
+#define BASE_DELAY_MS    (40.0)
 #define DELAY_VAR_MAX_MS (5.0)
-#define LFO_FREQ_HZ      (1.0)
+#define LFO_FREQ_HZ      (5.0)
 #define WET_GAIN         (0.5)
 #define DRY_GAIN         (1 - WET_GAIN)
 #define FFT_MOD_SIZE     ((N_SAMPLES / 2) + 1) // To save memory. Includes midpoint Nyquist
@@ -191,12 +187,6 @@ void chorus_mod(float* in_FFT, float* out_FFT)
         // Perform complex calculation
         mult_complex(in_real, in_imag, filter_real, filter_imag, out_real, out_imag);
     }
-
-    // HPF: attenuate 0Hz and 10Hz bands, or 1st and 2nd bins
-    out_FFT[0] *= ATTENUATION_0HZ;
-    out_FFT[1] *= ATTENUATION_0HZ;
-    out_FFT[2] *= ATTENUATION_10HZ;
-    out_FFT[3] *= ATTENUATION_10HZ;
 
     float mod_calc_time_ms = (dsp_get_cpu_cycle_count() - mod_start_cc) / 240e3;
     // Add to running sum
