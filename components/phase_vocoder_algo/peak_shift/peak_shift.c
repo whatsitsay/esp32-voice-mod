@@ -156,10 +156,6 @@ void shift_peaks_int(float shift_factor, float* run_phase_comp_ptr)
 {
   int num_samples = peak_shift_cfg->num_samples;
 
-  // Start by zero-ing out output FFT array
-  // Doubled for real + imag
-  memset(peak_shift_cfg->fft_out_ptr, 0, num_samples * sizeof(float) * 2);
-
   // Iterate through all ROI
   for (int i = 0; i < num_peaks; i++)
   {

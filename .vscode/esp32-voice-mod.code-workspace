@@ -1,12 +1,6 @@
 {
   "folders": [
     {
-      "path": "../fft_testing/fft_passthrough"
-    },
-    {
-      "path": "../fft_testing/fft_pure_tone"
-    },
-    {
       "path": "../components"
     },
     {
@@ -22,13 +16,10 @@
       "path": "../conv_effects/delay_chorus"
     },
     {
-      "path": "../iterative_effects/delay_chorus_iter"
-    },
-    {
       "path": "../conv_effects/schroeder_reverb"
     },
     {
-      "path": "../iterative_effects/schroeder_reverb_iter"
+      "path": "../fft_mod_testing/shift_chorus"
     }
   ],
   "settings": {

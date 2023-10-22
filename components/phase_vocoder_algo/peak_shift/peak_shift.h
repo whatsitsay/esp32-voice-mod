@@ -10,7 +10,7 @@
  * 
  */
 
-#define PEAK_THRESHOLD_DB (28) // Empirical TODO double-check
+#define PEAK_THRESHOLD_DB (20) // Empirical TODO double-check
 
 typedef struct {
   int num_samples;            // Number of samples N per FFT (*full* FFT, not just relevant portion)
@@ -30,7 +30,7 @@ typedef struct {
   float phase;          // Phase value of peak
 } peak_data_t;
 
-#define MAX_PEAKS (100) // Somewhat of a fudge factor to limit memory footprint
+#define MAX_PEAKS (150) // Somewhat of a fudge factor to limit memory footprint
 
 /**
  * @brief Store peak shift algorithm configuration and pointers

@@ -1,6 +1,6 @@
 
 /*
- * Passthrough test with pitch shifting (single pitch shift)
+ * Chorus effect using pitch shifting technique
  */
 
 #include <math.h>
@@ -95,9 +95,16 @@ EventGroupHandle_t xTaskSyncBits;
 // Semaphores
 static SemaphoreHandle_t xDbgMutex;
 
-#define SHIFT_FACTOR (0.75)
 #define PLOT_LEN (128)
 __attribute__((aligned(16))) float tx_FFT_mag[PLOT_LEN]; // For debug only
+
+// Lookup table for pitch shift factors
+#define NUM_PITCH_SHIFTS (3)
+static float pitch_shift_factors[] = {
+    1.0, // Tonic
+    0.75, // Lower Fifth
+    1.2, // Minor Third
+};
 
 ////// HELPER FUNCTIONS //////
 
@@ -190,10 +197,13 @@ void audio_data_modification(int* txBuffer, int* rxBuffer) {
 
     // Perform peak shift, if there are any peaks
     if (num_peaks > 0) {
+        // First zero out iFFT
         memset(tx_iFFT, 0, sizeof(tx_iFFT));
-        shift_peaks_int(SHIFT_FACTOR, run_phase_comp); 
-    }
-    else {
+        // Perform all peak shifts, adding them together
+        for (int i = 0; i < NUM_PITCH_SHIFTS; i++) {
+            shift_peaks_int(pitch_shift_factors[i], run_phase_comp);
+        }
+    } else {
         memcpy(tx_iFFT, rx_FFT, FFT_MOD_SIZE * 2 * sizeof(int)); // Copy RX->TX
         reset_phase_comp_arr(run_phase_comp); // If no peaks, reset running phase compensation
     }

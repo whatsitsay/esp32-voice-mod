@@ -13,7 +13,7 @@
 
 static const char *ES_TAG = "ES8388_DRIVER";
 #define DAC_VOLUME_DEFAULT_DB (0)
-#define ADC_VOLUME_DEFAULT_DB (0)
+#define ADC_VOLUME_DEFAULT_DB (-5)
 
 uint8_t es_i2c_write_bulk( uint8_t i2c_bus_addr, uint8_t reg, uint8_t bytes, uint8_t *data)
 {
