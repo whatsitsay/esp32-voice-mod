@@ -13,7 +13,7 @@
 
 static const char *ES_TAG = "ES8388_DRIVER";
 #define DAC_VOLUME_DEFAULT_DB (0)
-#define ADC_VOLUME_DEFAULT_DB (-25)
+#define ADC_VOLUME_DEFAULT_DB (0)
 
 uint8_t es_i2c_write_bulk( uint8_t i2c_bus_addr, uint8_t reg, uint8_t bytes, uint8_t *data)
 {
@@ -144,7 +144,7 @@ esp_err_t es8388_init( es_dac_output_t output, es_adc_input_t input )
 
     res |= es_write_reg(ES8388_ADDR, ES8388_DACPOWER, 0xC0);  //disable DAC and disable Lout/Rout/1/2
     res |= es_write_reg(ES8388_ADDR, ES8388_CONTROL1, 0x32);  //SameFs, Enfr=0,Play&Record Mode,(0x17-both of mic&paly)
-    res |= es_write_reg(ES8388_ADDR, ES8388_DACCONTROL1, 0x20); // 32-bit audio
+    res |= es_write_reg(ES8388_ADDR, ES8388_DACCONTROL1, 0x22); // 32-bit audio, left justify
     res |= es_write_reg(ES8388_ADDR, ES8388_DACCONTROL2, 0x02);  //DACFsMode,SINGLE SPEED; DACFsRatio,256
     res |= es_write_reg(ES8388_ADDR, ES8388_DACCONTROL6, 0x08);  // Clickfree disable
     res |= es_write_reg(ES8388_ADDR, ES8388_DACCONTROL16, 0x00); // 0x00 audio on LIN1&RIN1,  0x09 LIN2&RIN2
@@ -164,7 +164,7 @@ esp_err_t es8388_init( es_dac_output_t output, es_adc_input_t input )
     res |= es_write_reg(ES8388_ADDR, ES8388_ADCCONTROL2, input);
 
     res |= es_write_reg(ES8388_ADDR, ES8388_ADCCONTROL3, 0x08); // Mono-mix to ADC left, use LINPUT2
-    res |= es_write_reg(ES8388_ADDR, ES8388_ADCCONTROL4, 0b10); // 32-bit audio
+    res |= es_write_reg(ES8388_ADDR, ES8388_ADCCONTROL4, 0x11); // 32-bit audio, left justify 
     res |= es_write_reg(ES8388_ADDR, ES8388_ADCCONTROL5, 0x02);  //ADCFsMode,singel SPEED,RATIO=256
     //ALC for Microphone
     res |= es8388_set_adc_dac_volume(ES_MODULE_ADC, ADC_VOLUME_DEFAULT_DB, 0); 
@@ -195,13 +195,13 @@ esp_err_t es8388_config_i2s( es_bits_length_t bits_length, es_module_t mode, es_
 
     // Set the Format
     if (mode == ES_MODULE_ADC || mode == ES_MODULE_ADC_DAC) {
-        ESP_LOGW(ES_TAG,  "Setting I2S ADC Format\n");
+        ESP_LOGW(ES_TAG,  "Setting I2S ADC Format %d", fmt);
         res = es_read_reg(ES8388_ADCCONTROL4, &reg);
         reg = reg & 0xfc;
         res |= es_write_reg(ES8388_ADDR, ES8388_ADCCONTROL4, reg | fmt);
     }
     if (mode == ES_MODULE_DAC || mode == ES_MODULE_ADC_DAC) {
-        ESP_LOGW(ES_TAG,  "Setting I2S DAC Format\n");
+        ESP_LOGW(ES_TAG,  "Setting I2S DAC Format: %d", fmt);
         res = es_read_reg(ES8388_DACCONTROL1, &reg);
         reg = reg & 0xf9;
         res |= es_write_reg(ES8388_ADDR, ES8388_DACCONTROL1, reg | (fmt << 1));
@@ -211,13 +211,13 @@ esp_err_t es8388_config_i2s( es_bits_length_t bits_length, es_module_t mode, es_
     // Set the Sample bits length
     int bits = (int)bits_length;
     if (mode == ES_MODULE_ADC || mode == ES_MODULE_ADC_DAC) {
-        ESP_LOGW(ES_TAG,  "Setting I2S ADC Bits: %d\n", bits);
+        ESP_LOGW(ES_TAG,  "Setting I2S ADC Bits: %d", bits);
         res = es_read_reg(ES8388_ADCCONTROL4, &reg);
         reg = reg & 0xe3;
         res |=  es_write_reg(ES8388_ADDR, ES8388_ADCCONTROL4, reg | (bits << 2));
     }
     if (mode == ES_MODULE_DAC || mode == ES_MODULE_ADC_DAC) {
-        ESP_LOGW(ES_TAG, "Setting I2S DAC Bits: %d\n", bits);
+        ESP_LOGW(ES_TAG, "Setting I2S DAC Bits: %d", bits);
         res = es_read_reg(ES8388_DACCONTROL1, &reg);
         reg = reg & 0xc7;
         res |= es_write_reg(ES8388_ADDR, ES8388_DACCONTROL1, reg | (bits << 3));
@@ -317,7 +317,7 @@ void es8388_config()
 
     es_bits_length_t bits_length = BIT_LENGTH_32BITS;
     es_module_t module = ES_MODULE_ADC_DAC;
-    es_format_t fmt = ES_I2S_NORMAL;
+    es_format_t fmt = ES_I2S_LEFT;
 
     es8388_config_i2s( bits_length, module, fmt );
     es8388_set_voice_volume( VOL_DEFAULT );

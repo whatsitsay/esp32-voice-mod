@@ -43,10 +43,10 @@ __attribute__((aligned(16))) float tx_iFFT[N_SAMPLES * 2];
 #define ATTENUATION_10HZ (1.0)
 
 // Chorus effect macros/buffers
-#define BASE_DELAY_MS    (15.0)
-#define DELAY_VAR_MAX_MS (2.0)
-#define LFO_FREQ_HZ      (8.0)
-#define WET_GAIN         (0.005)
+#define BASE_DELAY_MS    (30.0)
+#define DELAY_VAR_MAX_MS (5.0)
+#define LFO_FREQ_HZ      (1.0)
+#define WET_GAIN         (0.5)
 #define DRY_GAIN         (1 - WET_GAIN)
 #define FFT_MOD_SIZE     ((N_SAMPLES / 2) + 1) // To save memory. Includes midpoint Nyquist
 // Array corresponding to e^(-2 * pi * k/N)
@@ -255,15 +255,15 @@ void audio_data_modification(int* txBuffer, int* rxBuffer) {
     for (int i = 0; i < HOP_SIZE; i++)
     {
         // Add-overlay beginning portion of iFFT into txBuffer
-        // float tx_val = tx_iFFT[2 * i] * hann_win[i]; // Window result (check if needed!);
-        float tx_val = tx_iFFT[2 * i]; // No more need for windowing
+        float tx_val = tx_iFFT[2 * i] * hann_win[i]; // Window result (check if needed!);
+        // float tx_val = tx_iFFT[2 * i]; // No more need for windowing
         txBuffer[2 * i] = (int)(txBuffer_overlap[i] + tx_val); 
         txBuffer[2 * i] <<= I2S_DOWNSHIFT; // Increase int value
         txBuffer[2 * i + 1] = txBuffer[2 * i]; // Copy L and R
 
         // Store latter portion for use next loop
-        // float tx_overlap_val = tx_iFFT[2 * (i + HOP_SIZE)] * hann_win[i + HOP_SIZE];
-        float tx_overlap_val = tx_iFFT[2 * (i + HOP_SIZE)];
+        float tx_overlap_val = tx_iFFT[2 * (i + HOP_SIZE)] * hann_win[i + HOP_SIZE];
+        // float tx_overlap_val = tx_iFFT[2 * (i + HOP_SIZE)];
         txBuffer_overlap[i] = tx_overlap_val;
     }
     xSemaphoreGive(xDbgMutex);
