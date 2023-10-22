@@ -170,13 +170,13 @@ void shift_peaks_int(float shift_factor, float* run_phase_comp_ptr)
 
     // Cap at actual boundaries if peak not actually surpassing boundary
     // TODO: may be worth setting some threshold value...
-    // int new_peak_idx  = peak_data[i].idx + idx_shift;
-    // if (new_roi_start < 0 && new_peak_idx >= 0) {
-    //   new_roi_start = 0;
-    // }
-    // if (new_roi_end   > num_samples/2 && new_peak_idx <= num_samples/2) {
-    //   new_roi_end = num_samples / 2;
-    // }
+    int new_peak_idx  = peak_data[i].idx + idx_shift;
+    if (new_roi_start < 0 && new_peak_idx >= 0) {
+      new_roi_start = 0;
+    }
+    if (new_roi_end   > num_samples/2 && new_peak_idx <= num_samples/2) {
+      new_roi_end = num_samples / 2;
+    }
 
     // Correct frequency change to be this integer increment
     // Should be uncorrected for sampling frequency
