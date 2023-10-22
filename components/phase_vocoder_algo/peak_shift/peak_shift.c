@@ -51,10 +51,6 @@ int find_local_peaks(void)
   // Set var for num samples, for ease of reference
   int num_samples = peak_shift_cfg->num_samples;
 
-  // Set flag for finding peak vs finding bound
-  // Start by determining left boundary
-  bool find_peak_not_bound = false;
-
   // Fill magnitude buffer
   // Use half size to save memory/cycles (given it's for real signal)
   // +1 for midpoint (Nyquist freq)
@@ -64,78 +60,75 @@ int find_local_peaks(void)
   // Iterate over magnitude array for indicies within bounds of peak detection,
   // taking into acount comparisons with previous/next neighbors
   // Only iterate through half of FFT, as it will be reflected by midpoint (Nyquist freq)
-  for (int i = 0; i < num_samples / 2 - 1; i++)
+  for (int i = NUM_NEIGHBORS; i <= peak_shift_cfg->num_samples / 2 - NUM_NEIGHBORS; i++)
   {
-    if (!find_peak_not_bound)
-    {
-      // Find boundary point
-      // If point is trough, ie lower point of five, it is a bound
-      // Use absolute value to indicate reflection across 0 Hz boundary
-      if ((mag_arr[abs(i-2)] > mag_arr[i]) && (mag_arr[abs(i-1)] > mag_arr[i]) &&
-          (mag_arr[i+1] > mag_arr[i]) && (mag_arr[i+2] > mag_arr[i]))
-      {
-        // Set leftbound to current index
-        peak_data[num_peaks].left_bound = i;
+    float check_val = mag_arr[i];
+    // First ensure check val is over threshold, to prevent noise
+    if (check_val < PEAK_THRESHOLD_DB) continue;
+    // Based on the paper used for the algorithm, a "peak" is defined as an index
+    // whose magnitude is larger than it's two neighbors in each direction (left
+    // and right). Supposedly, this should be good enough in practice
+    if (check_val < mag_arr[i-2]) continue;
+    if (check_val < mag_arr[i-1]) continue;
+    if (check_val < mag_arr[i+1]) continue;
+    if (check_val < mag_arr[i+2]) continue;
 
-        // If not the first peak, set previous right bound to point just before
-        if (num_peaks > 0) peak_data[num_peaks-1].right_bound = i-1;
-
-        // Change flag to find peak
-        find_peak_not_bound = true;
-      }
+    // Ensure we haven't reached the max number of peaks
+    // Otherwise, throw error by returning -1
+    if (num_peaks >= MAX_PEAKS) {
+      ESP_LOGE(TAG, "Reached maximum number of peaks!");
+      return -1;
     }
-    else
+
+    // If past those checks, value is local maxima
+    // Store index in peak data array
+    peak_data[num_peaks].idx = i;
+
+    // Store bounds
+    if (num_peaks == 0) 
     {
-      // If not enough previous data to compare, skip ahead
-      if (i < NUM_NEIGHBORS) continue;
-      // If less than threshold value, continue
-      if (mag_arr[i] < PEAK_THRESHOLD_DB) continue;
-      // If not enough future data to compare, exit early
-      if ((i + NUM_NEIGHBORS) > num_samples / 2) break;
-
-      // Peak is otherwise defined as point greater than 2 neighbors both before and after
-      if ((mag_arr[i-2] < mag_arr[i]) && (mag_arr[i-1] < mag_arr[i]) &&
-          (mag_arr[i+1] < mag_arr[i]) && (mag_arr[i+2] < mag_arr[i]))
-        {
-          // Ensure we haven't reached the max number of peaks
-          // Otherwise, throw error by returning -1
-          if (num_peaks >= MAX_PEAKS) {
-            ESP_LOGE(TAG, "Reached maximum number of peaks!");
-            return -1;
-          }
-
-          // Store index in peak data array
-          peak_data[num_peaks].idx = i;
-
-          // Store phase
-          peak_data[num_peaks].phase = get_idx_phase(peak_shift_cfg->fft_ptr, i);
-
-          // Better estimate actual frequency of peak using phase difference
-          // with previous frame (back calculation only, as this is real-time)
-          float phase_diff = peak_data[num_peaks].phase - get_idx_phase(peak_shift_cfg->fft_prev_ptr, i);
-          // Bound between pi and -pi
-          phase_diff = MIN(M_PI, phase_diff);
-          phase_diff = MAX(-M_PI, phase_diff);
-          // Correction is defined as the ratio of this phase diff over 2pi, times the bin frequency step
-          float freq_diff = (phase_diff * peak_shift_cfg->bin_freq_step) / (2 * M_PI);
-          // Correct for instantaneous frequency estimate
-          peak_data[num_peaks].inst_freq = (i * peak_shift_cfg->bin_freq_step) + freq_diff;
-
-          // Increment num_peaks
-          num_peaks++;
-
-          // Switch to find boundary
-          find_peak_not_bound = false;
-        }
+      // For first peak, left bound will be first index
+      // Right bound will be stored later on
+      peak_data[num_peaks].left_bound = 0;
     }
+    else 
+    {
+      // Each region of influence (ROI) will be defined as between the midpoints
+      // of each peak
+      int midpoint = (peak_data[num_peaks].idx + peak_data[num_peaks - 1].idx) / 2;
+      // Store previous peak right bound as midpoint
+      peak_data[num_peaks - 1].right_bound = midpoint;
+      // Store current peak left bound as midpoint+1
+      // Right bound will be stored later on
+      peak_data[num_peaks].left_bound = midpoint + 1;
+    }
+
+    // Store phase
+    peak_data[num_peaks].phase = get_idx_phase(peak_shift_cfg->fft_ptr, i);
+
+    // Better estimate actual frequency of peak using phase difference
+    // with previous frame (back calculation only, as this is real-time)
+    float phase_diff = peak_data[num_peaks].phase - get_idx_phase(peak_shift_cfg->fft_prev_ptr, i);
+    // Bound between pi and -pi
+    phase_diff = MIN(M_PI, phase_diff);
+    phase_diff = MAX(-M_PI, phase_diff);
+    // Correction is defined as the ratio of this phase diff over 2pi, times the bin frequency step
+    float freq_diff = (phase_diff * peak_shift_cfg->bin_freq_step) / (2 * M_PI);
+    // Correct for instantaneous frequency estimate
+    peak_data[num_peaks].inst_freq = (i * peak_shift_cfg->bin_freq_step) + freq_diff;
+
+    // Increment num_peaks
+    num_peaks++;
   }
 
-  // If at least one peak, and currently searching for boundary, store last rightmost bound as rightmost index
-  if ((num_peaks > 0) && !find_peak_not_bound)
+  // If at least one peak, store last rightmost bound as rightmost index
+  // Again, this will be the midpoint due to reflection
+  if (num_peaks > 0)
   {
     peak_data[num_peaks-1].right_bound = (peak_shift_cfg->num_samples/2);
   }
- 
+
+  // Return number of peaks
   return num_peaks;
 }
 
@@ -167,14 +160,6 @@ void shift_peaks_int(float shift_factor, float* run_phase_comp_ptr)
   // Doubled for real + imag
   memset(peak_shift_cfg->fft_out_ptr, 0, num_samples * sizeof(float) * 2);
 
-  // Otherwise, copy everything up to first left bound as-is
-  // This is due to lower-frequency noise from windowing
-  // Doubled for real + imag
-  for (int i = 0; i < 2 * peak_data[0].left_bound; i++)
-  {
-    peak_shift_cfg->fft_out_ptr[i] = peak_shift_cfg->fft_ptr[i];
-  }
-
   // Iterate through all ROI
   for (int i = 0; i < num_peaks; i++)
   {
@@ -186,16 +171,16 @@ void shift_peaks_int(float shift_factor, float* run_phase_comp_ptr)
     int idx_shift = (int)roundf(delta_f_raw / peak_shift_cfg->bin_freq_step);
     int new_roi_start = peak_data[i].left_bound + idx_shift;
     int new_roi_end   = peak_data[i].right_bound + idx_shift;
-    int new_peak_idx  = peak_data[i].idx + idx_shift;
 
     // Cap at actual boundaries if peak not actually surpassing boundary
     // TODO: may be worth setting some threshold value...
-    if (new_roi_start < 0 && new_peak_idx >= 0) {
-      new_roi_start = 0;
-    }
-    if (new_roi_end   > num_samples/2 && new_peak_idx <= num_samples/2) {
-      new_roi_end = num_samples / 2;
-    }
+    // int new_peak_idx  = peak_data[i].idx + idx_shift;
+    // if (new_roi_start < 0 && new_peak_idx >= 0) {
+    //   new_roi_start = 0;
+    // }
+    // if (new_roi_end   > num_samples/2 && new_peak_idx <= num_samples/2) {
+    //   new_roi_end = num_samples / 2;
+    // }
 
     // Correct frequency change to be this integer increment
     // Should be uncorrected for sampling frequency

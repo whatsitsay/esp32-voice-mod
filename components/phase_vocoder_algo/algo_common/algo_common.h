@@ -11,7 +11,7 @@
 
 #define MAX(x, y) ((x > y) ? x : y)
 #define MIN(x, y) ((x < y) ? x : y)
-#define FFT_DB_BASE (1e4) // Base value for comparison when calculating dB values of magnitude
+#define FFT_DB_BASE (1e5) // Base value for comparison when calculating dB values of magnitude
 
 /**
  * @brief Init DSP-related coefficients (FFT, Hann window)

@@ -95,11 +95,11 @@ EventGroupHandle_t xTaskSyncBits;
 // Semaphores
 static SemaphoreHandle_t xDbgMutex;
 
-#define SHIFT_FACTOR (1.5)
+#define SHIFT_FACTOR (1.0)
 
 // Tone parameters
 #define TONE_BITS (24)
-#define TONE_AMPL (powf(2, TONE_BITS - 1) * 0.75) // Less than max 
+#define TONE_AMPL (powf(2, TONE_BITS - 1)-1) 
 #define SAMPLES_PER_CYCLE (128) // Even for I2S
 #define TONE_FREQ_HZ (I2S_SAMPLING_FREQ_HZ / SAMPLES_PER_CYCLE / 2) // A little backwards, but should help even wave
 #define TONE_FREQ_SIN (1.0 * TONE_FREQ_HZ / I2S_SAMPLING_FREQ_HZ) // Sinusoid apparent freq
@@ -203,15 +203,13 @@ void audio_data_modification(int* txBuffer, int* rxBuffer) {
     for (int i = 0; i < HOP_SIZE; i++)
     {
         // Add-overlay beginning portion of iFFT into txBuffer
-        // float tx_val = tx_iFFT[2 * i] * hann_win[i]; // Window result (check if needed!;
-        float tx_val = tx_iFFT[2 * i]; // No more need for windowing
+        float tx_val = tx_iFFT[2 * i] * hann_win[i]; // Window result
         txBuffer[2 * i] = (int)(txBuffer_overlap[i] + tx_val); 
         txBuffer[2 * i] <<= (32 - TONE_BITS); // Increase int value
         txBuffer[2 * i + 1] = txBuffer[2 * i]; // Copy L and R
 
         // Store latter portion for use next loop
-        // float tx_overlap_val = tx_iFFT[2 * (i + HOP_SIZE)] * hann_win[i + HOP_SIZE];
-        float tx_overlap_val = tx_iFFT[2 * (i + HOP_SIZE)];
+        float tx_overlap_val = tx_iFFT[2 * (i + HOP_SIZE)] * hann_win[i + HOP_SIZE];
         txBuffer_overlap[i] = tx_overlap_val;
     }
     xSemaphoreGive(xDbgMutex);
