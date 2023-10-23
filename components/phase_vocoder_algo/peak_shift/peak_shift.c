@@ -16,7 +16,7 @@
 #include "sdkconfig.h"
 #include "esp_err.h"
 #include "esp_dsp.h"
-#include "algo_common.h"
+#include <algo_common.h>
 
 #define NUM_NEIGHBORS (2) // For peak detection
 

@@ -21,6 +21,7 @@
 // Local libraries
 #include <es8388.h>
 #include <algo_common.h>
+#include <filters.h>
 
 // Number of samples
 #define N_SAMPLES (4096)
@@ -45,8 +46,6 @@ __attribute__((aligned(16))) float tx_iFFT[N_SAMPLES * 2];
 #define WET_GAIN         (0.5)
 #define DRY_GAIN         (1 - WET_GAIN)
 #define FFT_MOD_SIZE     ((N_SAMPLES / 2) + 1) // To save memory. Includes midpoint Nyquist
-// Array corresponding to e^(-2 * pi * k/N)
-__attribute__((aligned(16))) float delay_coeffs[2 * N_SAMPLES];
 
 // Stats trackers
 static unsigned int loop_count  = 0;
@@ -173,8 +172,8 @@ void chorus_mod(float* in_FFT, float* out_FFT)
     for (int k = 0; k <= FFT_MOD_SIZE; k++) {
         // Calc filter complex number
         int filter_idx  = (k * frame_delay_samples) % N_SAMPLES;
-        float filter_real = DRY_GAIN + WET_GAIN * delay_coeffs[2 * filter_idx];
-        float filter_imag = -1 * WET_GAIN * delay_coeffs[2 * filter_idx + 1]; // -1 due to negative exponent and odd function
+        float filter_real = DRY_GAIN + WET_GAIN * get_euler_coeff(filter_idx, false);
+        float filter_imag = WET_GAIN * get_euler_coeff(filter_idx, true);
 
         // Grab input complex number
         float in_real  = in_FFT[2 * k];
@@ -475,12 +474,7 @@ void app_main(void)
     dsps_wind_hann_f32(hann_win, N);
 
     // Initialize delay sinusoid coefficients
-    // TODO: maybe in separate function?
-    for (int k = 0; k < N_SAMPLES; k++)
-    {
-        delay_coeffs[2 * k]     = cosf((2 * M_PI * k) / N_SAMPLES); // Real component
-        delay_coeffs[2 * k + 1] = sinf((2 * M_PI * k) / N_SAMPLES); // Imag component
-    }
+    init_euler_coeffs();
 
     // Intantiate indices
     i2s_idx = I2S_IDX_START;

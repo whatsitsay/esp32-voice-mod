@@ -19,11 +19,11 @@
 #include "esp_dsp.h"
 
 // Local libraries
+#include <filters.h>
 #include <es8388.h>
 #include <algo_common.h>
 
 // Number of samples
-#define N_SAMPLES (4096)
 #define HOP_SIZE (N_SAMPLES / 2) // Overlap 50%
 #define HOP_BUFFER_SIZE_B (2 * HOP_SIZE * 4) // == length of rx/tx buffers (bytes)
 // rx/tx buffers. Size doubled for L+R (even if only R is used)
@@ -55,8 +55,6 @@ __attribute__((aligned(16))) float tx_iFFT[N_SAMPLES * 2];
 
 // Array of impulse frequency response coefficients
 __attribute__((aligned(16))) float reverb_coeffs[2 * FFT_MOD_SIZE];
-// Array corresponding to e^(-2 * pi * k/N)
-__attribute__((aligned(16))) float euler_coeffs[2 * N_SAMPLES];
 
 // Stats trackers
 static unsigned int loop_count  = 0;
@@ -157,35 +155,6 @@ void print_task_stats(void* pvParameters)
     }
 }
 
-void calc_allpass_coeffs(float ap_gain, int ap_angle_idx, float* ap_real, float* ap_imag)
-{
-    int corr_angle_idx = ap_angle_idx % N_SAMPLES; // Correct for number of samples
-    // Transfer function for an all pass is given by the equation:
-    // H(z) = (g + z^-N) / (1 + g * z^-N)
-    // Numerator values
-    float ap_num_real = ap_gain + euler_coeffs[2 * corr_angle_idx];
-    float ap_num_imag = euler_coeffs[2 * corr_angle_idx + 1];
-    // Denominator values
-    float ap_den_real = 1 + ap_gain * euler_coeffs[2 * corr_angle_idx];
-    float ap_den_imag = ap_gain * euler_coeffs[2 * corr_angle_idx + 1];
-
-    // Calculate division
-    divide_complex(ap_num_real, ap_num_imag, ap_den_real, ap_den_imag, ap_real, ap_imag);
-}
-
-void calc_comb_coeffs(float comb_gain, int comb_angle_idx, float* comb_real, float* comb_imag)
-{
-    comb_angle_idx %= N_SAMPLES; // Ensure no overrun
-    // Transfer function for simple comb filter is given by the equation:
-    // H(z) = 1 / (1 - g * z^-N)
-    // Denominator values
-    float comb_den_real = 1 - comb_gain * euler_coeffs[2 * comb_angle_idx];
-    float comb_den_imag = -1 * comb_gain * euler_coeffs[2 * comb_angle_idx + 1];
-
-    // Calculate division of 1
-    divide_complex(1, 0, comb_den_real, comb_den_imag, comb_real, comb_imag);
-}
-
 void init_reverb_coeffs()
 {
     // Calculate all gains and store in temporary luts
@@ -213,28 +182,27 @@ void init_reverb_coeffs()
         roundf(AP2_TAU_MS * I2S_SAMPLING_FREQ_HZ / 1000)
     };
 
-    // Doubled for real + imag
-    float ap_coeffs[2 * NUM_AP_FILTERS], comb_coeffs[2 * NUM_COMB_FILTERS];
-
     // Loop over coefficient LUT
     for (int k = 0; k < FFT_MOD_SIZE; k++)
     {
-        float ap_real, ap_imag;
+        // Start with impulse 1 + 0j
+        float ap_real = 1; 
+        float ap_imag = 0;
+        // Cascade multiply allpass coefficients
+        for (int i = 0; i < NUM_AP_FILTERS; i++) {
+            allpass_filter(ap_gain[i], ap_delay_idx[i] * k, ap_real, ap_imag, &ap_real, &ap_imag);
+        }
+
+        // Calculate comb filters in parallel, so each gets an impulse response as input
         float comb_real = 0;
         float comb_imag = 0;
-        // Start by calculating complex coefficients of all filters
-        for (int i = 0; i < NUM_AP_FILTERS; i++) {
-            calc_allpass_coeffs(ap_gain[i], ap_delay_idx[i] * k, &ap_coeffs[2*i], &ap_coeffs[2*i + 1]);
-        }
-        // Allpass filters are cascaded, so create product
-        mult_complex(ap_coeffs[0], ap_coeffs[1], ap_coeffs[2], ap_coeffs[3], &ap_real, &ap_imag);
-
         for (int i = 0; i < NUM_COMB_FILTERS; i++) {
-            calc_allpass_coeffs(comb_gain[i], comb_delay_idx[i] * k, &comb_coeffs[2*i], &comb_coeffs[2*i + 1]);
+            float curr_comb_real, curr_comb_imag;
+            comb_filter(comb_gain[i], comb_delay_idx[i] * k, 1, 0, &curr_comb_real, &curr_comb_imag);
             // Comb filters are summed, so add to running sum here
             // Also correct for number of filters when adding
-            comb_real += comb_coeffs[2 * i] / NUM_COMB_FILTERS;
-            comb_imag += comb_coeffs[2 * i + 1] / NUM_COMB_FILTERS;
+            comb_real += curr_comb_real / NUM_COMB_FILTERS;
+            comb_imag += curr_comb_imag / NUM_COMB_FILTERS;
         }
 
         // Reverb coefficients will be product of AP and comb filters
@@ -530,13 +498,7 @@ void app_main(void)
     dsps_wind_hann_f32(hann_win, N);
 
     // Initialize complex sinusoid coefficients
-    // Only using delay taps, so use negative sine coefficients
-    // TODO: maybe in separate function?
-    for (int k = 0; k < N_SAMPLES; k++)
-    {
-        euler_coeffs[2 * k]     = cosf((2 * M_PI * k) / N_SAMPLES); // Real component
-        euler_coeffs[2 * k + 1] = sinf((-2 * M_PI * k) / N_SAMPLES); // Imag component
-    }
+    init_euler_coeffs();
 
     // Initialize reverb coefficients
     init_reverb_coeffs();
