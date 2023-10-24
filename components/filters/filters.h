@@ -1,30 +1,6 @@
 #ifndef __FILTERS_H__
 #define __FILTERS_H__
 
-#ifndef N_SAMPLES
-  #define N_SAMPLES (4096)
-#endif
-
-/**
- * @brief Initialize Euler coefficient array
- * 
- * Represents array of values for e^(jwk) for k in [0, N_SAMPLES], both
- * real and imaginary components.
- * 
- */
-void init_euler_coeffs();
-
-/**
- * @brief Get the euler coefficient for the given discrete angle
- * 
- * Automatically corrected for by N_SAMPLES
- * 
- * @param angle_idx - Index of discrete angle
- * @param imag_comp - True if imaginary component, false otherwise
- * @return float - Coefficient value
- */
-float get_euler_coeff(int angle_idx, bool imag_comp);
-
 /**
  * @brief Allpass filter
  * 

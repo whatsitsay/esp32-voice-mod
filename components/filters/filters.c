@@ -19,27 +19,6 @@
 #include "filters.h"
 #include <algo_common.h>
 
-static float euler_coeffs[N_SAMPLES * 2];
-
-void init_euler_coeffs()
-{
-  // Only using delay taps, so use negative sine coefficients
-  for (int k = 0; k < N_SAMPLES; k++)
-  {
-    euler_coeffs[2 * k]     = cosf((2 * M_PI * k) / N_SAMPLES); // Real component
-    euler_coeffs[2 * k + 1] = sinf((-2 * M_PI * k) / N_SAMPLES); // Imag component
-  }
-
-}
-
-float get_euler_coeff(int angle_idx, bool imag_comp)
-{
-  int corr_angle_idx = angle_idx % N_SAMPLES; // Correct for number of samples
-  int array_idx = (imag_comp) ? 2 * corr_angle_idx + 1 : 2 * corr_angle_idx;
-
-  return euler_coeffs[array_idx];
-}
-
 void allpass_filter(float ap_gain, int ap_angle_idx, float in_real, float in_imag, float* out_real, float* out_imag)
 {
   float ap_real, ap_imag;

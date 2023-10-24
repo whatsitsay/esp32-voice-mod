@@ -24,7 +24,7 @@
 #include <filters.h>
 
 // Number of samples
-#define N_SAMPLES (4096)
+
 #define HOP_SIZE (N_SAMPLES / 2) // Overlap 50%
 #define HOP_BUFFER_SIZE_B (2 * HOP_SIZE * 4) // == length of rx/tx buffers (bytes)
 // rx/tx buffers. Size doubled for L+R (even if only R is used)
@@ -35,7 +35,6 @@ int N = N_SAMPLES;
 #define I2S_DOWNSHIFT (8) // 24-bit precision, can downshift safely by byte for FFT calcs
 
 // FFT buffers
-__attribute__((aligned(16))) float hann_win[N_SAMPLES];
 __attribute__((aligned(16))) float rx_FFT[N_SAMPLES * 2]; // Will be complex
 __attribute__((aligned(16))) float tx_iFFT[N_SAMPLES * 2];
 
@@ -216,7 +215,7 @@ void audio_data_modification(int* txBuffer, int* rxBuffer) {
 
         // Dot-product with hann window
         // Downshift to prevent overflow (last 8 bits are always 0)
-        rx_FFT[2 * i] = (float)(rx_val >> I2S_DOWNSHIFT) * hann_win[i];
+        rx_FFT[2 * i] = (float)(rx_val >> I2S_DOWNSHIFT) * hann_win(i);
         // Set imaginary component to 0
         rx_FFT[2 * i + 1] = 0;
     }
@@ -244,13 +243,13 @@ void audio_data_modification(int* txBuffer, int* rxBuffer) {
     for (int i = 0; i < HOP_SIZE; i++)
     {
         // Add-overlay beginning portion of iFFT into txBuffer
-        float tx_val = tx_iFFT[2 * i] * hann_win[i]; // Window result
+        float tx_val = tx_iFFT[2 * i] * hann_win(i); // Window result
         txBuffer[2 * i] = (int)(txBuffer_overlap[i] + tx_val); 
         txBuffer[2 * i] <<= I2S_DOWNSHIFT; // Increase int value
         txBuffer[2 * i + 1] = txBuffer[2 * i]; // Copy L and R
 
         // Store latter portion for use next loop
-        float tx_overlap_val = tx_iFFT[2 * (i + HOP_SIZE)] * hann_win[i + HOP_SIZE];
+        float tx_overlap_val = tx_iFFT[2 * (i + HOP_SIZE)] * hann_win(i + HOP_SIZE);
         txBuffer_overlap[i] = tx_overlap_val;
     }
     xSemaphoreGive(xDbgMutex);
@@ -470,11 +469,9 @@ void app_main(void)
 
     // Initialize FFT coefficients
     dsps_fft2r_init_fc32(NULL, N);
-    // Initialize input hann window
-    dsps_wind_hann_f32(hann_win, N);
 
     // Initialize delay sinusoid coefficients
-    init_euler_coeffs();
+    
 
     // Intantiate indices
     i2s_idx = I2S_IDX_START;

@@ -1,3 +1,5 @@
+#ifndef __ALGO_COMMON_H__
+#define __ALGO_COMMON_H__
 /**
  * @file algo_common.c
  * @author Gabriel Kaufman (whatsitsay)
@@ -13,14 +15,7 @@
 #define MIN(x, y) ((x < y) ? x : y)
 #define FFT_DB_BASE (1e5) // Base value for comparison when calculating dB values of magnitude
 
-/**
- * @brief Init DSP-related coefficients (FFT, Hann window)
- * 
- * @param num_samples - Size of FFT/Hann window arrays
- * @param hann_win - Pointer to Hann window array
- * @return esp_err_t - OR'ed result of operations (ESP_OK if successful)
- */
-esp_err_t init_dsp_coeffs(int num_samples, float* hann_win);
+#define N_SAMPLES (4096) // Number of samples for FFT operations
 
 /**
  * @brief Calculate FFT from signal data
@@ -125,3 +120,26 @@ void divide_complex(float x_real, float x_imag, float y_real, float y_imag, floa
  * @param cpx_imag - Imaginary component (output)
  */
 void polar_to_complex(float mag, float angle, float* cpx_real, float* cpx_imag);
+
+/**
+ * @brief Get the euler coefficient for the given discrete angle
+ * 
+ * Automatically corrected for by N_SAMPLES
+ * 
+ * @param angle_idx - Index of discrete angle
+ * @param imag_comp - True if imaginary component, false otherwise
+ * @return float - Coefficient value
+ */
+float get_euler_coeff(int angle_idx, bool imag_comp);
+
+/**
+ * @brief Get Hann window coefficient at the given index
+ * 
+ * Defined for N=4096
+ * 
+ * @param idx - Current window index
+ * @return float - Value of window at index
+ */
+float hann_win(int idx);
+
+#endif // __ALGO_COMMON_H__

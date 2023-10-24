@@ -25,7 +25,6 @@
 #define PLOT_LEN (128)
 
 // Number of samples
-#define N_SAMPLES (4096)
 #define HOP_SIZE (N_SAMPLES) // No overlap here, just data gathering
 #define HOP_BUFFER_SIZE_B (2 * HOP_SIZE * 4) // == length of rx/tx buffers (bytes)
 // rx/tx buffers. Size doubled for L+R (even if only R is used)
@@ -46,7 +45,6 @@ static unsigned int rx_ovfl_hit = 0;
 static unsigned int full_data_rcvd = 0;
 
 // FFT buffers
-__attribute__((aligned(16))) float hann_win[RX_BUFFER_LEN];
 __attribute__((aligned(16))) float rx_FFT[RX_BUFFER_LEN * 2]; // Will be complex
 
 #define FFT_MOD_SIZE (N_SAMPLES/2 + 1) // +1 for midpoint N/2
@@ -209,8 +207,8 @@ void app_main(void)
     ESP_ERROR_CHECK(i2s_channel_register_event_callback(rx_handle, &cbs, NULL));
     ESP_ERROR_CHECK(i2s_channel_register_event_callback(tx_handle, &cbs, NULL));
 
-    // Initialize DSP coefficients (FFT, Hann window)
-    init_dsp_coeffs(N, hann_win);
+    // Initialize FFT coefficients
+    dsps_fft2r_init_fc32(NULL, N);
 
     // Set peak shift algorithm config
     peak_shift_cfg_t cfg = {
@@ -282,7 +280,7 @@ void app_main(void)
             float rx_f = (float)(rxBuffer[2 * i] >> I2S_DOWNSHIFT);
             
             // Dot-multiply with Hann windows to reduce effect of edges
-            rx_FFT[2 * i] = rx_f * hann_win[i];
+            rx_FFT[2 * i] = rx_f * hann_win(i);
             rx_FFT[2 * i + 1] = 0; // No complex component
         }
 

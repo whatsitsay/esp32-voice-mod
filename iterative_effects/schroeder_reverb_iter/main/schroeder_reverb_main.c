@@ -24,7 +24,6 @@
 #include <algo_common.h>
 
 // Number of samples
-#define N_SAMPLES (4096)
 #define HOP_SIZE (N_SAMPLES / 2) // Overlap 50%
 #define HOP_BUFFER_SIZE_B (2 * HOP_SIZE * 4) // == length of rx/tx buffers (bytes)
 // rx/tx buffers. Size doubled for L+R (even if only R is used)
@@ -133,7 +132,6 @@ static SemaphoreHandle_t xDbgMutex;
 // Debug: FFT buffers
 float rx_FFT[2 * N_SAMPLES];
 float tx_FFT[2 * N_SAMPLES];
-float hann_win[N_SAMPLES];
 #define PLOT_LEN (128)
 __attribute__((aligned(16))) float rx_FFT_mag[PLOT_LEN];
 __attribute__((aligned(16))) float tx_FFT_mag[PLOT_LEN]; // For debug only
@@ -230,10 +228,10 @@ void audio_data_modification(int* txBuffer, int* rxBuffer) {
 
     // DEBUG: Create FFT magnitude plots
     for (int i = 0; i < N_SAMPLES; i++) {
-        rx_FFT[2 * i] = (float)rx_delay_line[i] * hann_win[i] / 256;
+        rx_FFT[2 * i] = (float)rx_delay_line[i] * hann_win(i) / 256;
         rx_FFT[2 * i + 1] = 0;
 
-        tx_FFT[2 * i] = tx_delay_line[i] * hann_win[i] / 256;
+        tx_FFT[2 * i] = tx_delay_line[i] * hann_win(i) / 256;
         tx_FFT[2 * i + 1] = 0;
     }
     calc_fft(rx_FFT, N);
@@ -454,7 +452,7 @@ void app_main(void)
     memset(tx_delay_line, 0, sizeof(tx_delay_line));
 
     // Init DSP coefficients
-    init_dsp_coeffs(N, hann_win);
+    dsps_fft2r_init_fc32(NULL, N);
 
     // Intantiate indices
     i2s_idx = I2S_IDX_START;

@@ -24,7 +24,6 @@
 #include <algo_common.h>
 
 // Number of samples
-#define N_SAMPLES (4096)
 #define HOP_SIZE (N_SAMPLES / 2) // Overlap 50%
 #define HOP_BUFFER_SIZE_B (2 * HOP_SIZE * 4) // == length of rx/tx buffers (bytes)
 // rx/tx buffers. Size doubled for L+R (even if only R is used)
