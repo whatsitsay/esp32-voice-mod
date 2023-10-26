@@ -13,7 +13,7 @@
 
 static const char *ES_TAG = "ES8388_DRIVER";
 #define DAC_VOLUME_DEFAULT_DB (0)
-#define ADC_VOLUME_DEFAULT_DB (-5)
+#define ADC_VOLUME_DEFAULT_DB (-20)
 
 uint8_t es_i2c_write_bulk( uint8_t i2c_bus_addr, uint8_t reg, uint8_t bytes, uint8_t *data)
 {
@@ -316,7 +316,7 @@ void es8388_config()
     //	es_mode_t  = ES_MODULE_ADC_DAC;
 
     es_bits_length_t bits_length = BIT_LENGTH_32BITS;
-    es_module_t module = ES_MODULE_ADC_DAC;
+    es_module_t module = ES_MODULE_DAC; // Use INMP441 for microphone instead of built-in mics
     es_format_t fmt = ES_I2S_LEFT;
 
     es8388_config_i2s( bits_length, module, fmt );
@@ -345,10 +345,10 @@ esp_err_t es_toggle_power_amp()
 
 void es_i2s_init(i2s_chan_handle_t* tx_handle, i2s_chan_handle_t* rx_handle, int i2s_sample_rate)
 {
-    i2s_chan_config_t i2s_chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_AUTO, I2S_ROLE_MASTER);
+    i2s_chan_config_t i2s_chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
     i2s_chan_cfg.dma_desc_num  = 3;
     i2s_chan_cfg.dma_frame_num = 511; // Same as buffer length?
-    i2s_new_channel(&i2s_chan_cfg, tx_handle, rx_handle);
+    i2s_new_channel(&i2s_chan_cfg, tx_handle, NULL);
 
     i2s_std_config_t std_cfg = {
         .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(i2s_sample_rate),
@@ -367,5 +367,33 @@ void es_i2s_init(i2s_chan_handle_t* tx_handle, i2s_chan_handle_t* rx_handle, int
         }
     };
     i2s_channel_init_std_mode(*tx_handle, &std_cfg);
-    i2s_channel_init_std_mode(*rx_handle, &std_cfg);
+    // i2s_channel_init_std_mode(*rx_handle, &std_cfg);
+
+    // Initialize INMP441 microphone as RX channel
+    // Set L/R low to mimic ground (set channel as "L")
+    gpio_set_direction(GPIO_NUM_19, GPIO_MODE_OUTPUT);
+    gpio_set_level(GPIO_NUM_19, 0);
+    // Set I2S config
+    i2s_chan_config_t mic_chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_1, I2S_ROLE_MASTER);
+    i2s_chan_cfg.dma_desc_num  = 3;
+    i2s_chan_cfg.dma_frame_num = 511; // Same as buffer length?
+    i2s_new_channel(&mic_chan_cfg, NULL, rx_handle);
+    i2s_std_config_t mic_cfg = {
+        .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(i2s_sample_rate),
+        // Use Philips as there is one clock cycle delay before data clocks out
+        .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_STEREO),
+        .gpio_cfg = {
+            .mclk = I2S_GPIO_UNUSED,
+            .bclk = GPIO_NUM_22,
+            .ws   = GPIO_NUM_21,
+            .dout = I2S_GPIO_UNUSED,
+            .din  = GPIO_NUM_23,
+            .invert_flags = {
+                .mclk_inv = false,
+                .bclk_inv = false,
+                .ws_inv   = false,
+            }
+        }
+    };
+    i2s_channel_init_std_mode(*rx_handle, &mic_cfg);
 }

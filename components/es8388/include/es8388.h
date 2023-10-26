@@ -23,7 +23,7 @@
 #define ACK_VAL I2C_MASTER_ACK
 #define NACK_VAL I2C_MASTER_NACK
 
-#define VOL_DEFAULT (70) // For headphones
+#define VOL_DEFAULT (100) // For headphones
 
 
 #define SAMPLE_RATE     (44100)
