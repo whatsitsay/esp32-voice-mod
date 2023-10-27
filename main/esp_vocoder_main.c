@@ -166,12 +166,12 @@ void print_task_stats(void* pvParameters)
 }
 
 /**
- * Function for performing audio data modification
+ * @brief Function for performing audio data modification
  * 
- * In this app, performs FFT and iFFT on data, essentially acting
- * as a passthrough
+ * @param rxBuffer - Buffer containing microphone input sound data
+ * @param txBuffer - Output buffer for modified sound data for transmission
  */
-void audio_data_modification(int* txBuffer, int* rxBuffer) {
+void audio_data_modification(int* rxBuffer, int* txBuffer) {
     static const char* TAG = "Audio Modification";
 
     // Copy RX overlap into debug buffer
@@ -333,7 +333,7 @@ void proc_audio_data(void* pvParameters)
         unsigned int start_cc = dsp_get_cpu_cycle_count();
 
         // Modify data
-        audio_data_modification(txBuffer, rxBuffer);
+        audio_data_modification(rxBuffer, txBuffer);
         
         unsigned int end_cc = dsp_get_cpu_cycle_count();
 
