@@ -88,5 +88,7 @@ void print_local_peaks(void);
  * as well as a running phase compensation array
  * 
  * @param shift_factor - Factor by which to shift frequency data
+ * @param gain - Gain applied to shifted peaks
+ * @param run_phase_comp_ptr - Pointer to array containing running phase rotation data
  */
-void shift_peaks_int(float shift_factor, float* run_phase_comp_ptr);
+void shift_peaks_int(float shift_factor, float gain, float* run_phase_comp_ptr);

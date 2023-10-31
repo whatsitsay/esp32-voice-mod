@@ -107,11 +107,14 @@ static SemaphoreHandle_t xDbgMutex;
 __attribute__((aligned(16))) float tx_FFT_mag[PLOT_LEN]; // For debug only
 
 // Lookup table for pitch shift factors
-#define NUM_PITCH_SHIFTS (3)
+#define NUM_PITCH_SHIFTS (2)
 static float pitch_shift_factors[] = {
-    1.0, // Tonic
     0.75, // Lower Fifth
     1.2, // Minor Third
+};
+static float pitch_shift_gains[] = {
+    1.2, // Lower fifth
+    0.75, // Minor third
 };
 
 ////// HELPER FUNCTIONS //////
@@ -166,12 +169,12 @@ void print_task_stats(void* pvParameters)
 }
 
 /**
- * Function for performing audio data modification
+ * @brief Function for performing audio data modification
  * 
- * In this app, performs FFT and iFFT on data, essentially acting
- * as a passthrough
+ * @param rxBuffer - Buffer containing microphone input sound data
+ * @param txBuffer - Output buffer for modified sound data for transmission
  */
-void audio_data_modification(int* txBuffer, int* rxBuffer) {
+void audio_data_modification(int* rxBuffer, int* txBuffer) {
     static const char* TAG = "Audio Modification";
 
     // Copy RX overlap into debug buffer
@@ -203,17 +206,17 @@ void audio_data_modification(int* txBuffer, int* rxBuffer) {
     configASSERT( num_peaks >= 0 ); // If -1, reached max
     num_peaks_sum += num_peaks;
 
-    // Perform peak shift, if there are any peaks
+    // Copy in tonic to start
+    memcpy(tx_iFFT, rx_FFT, FFT_MOD_SIZE * 2 * sizeof(float));
+
     if (num_peaks > 0) {
-        // First zero out iFFT
-        memset(tx_iFFT, 0, sizeof(tx_iFFT));
-        // Perform all peak shifts, adding them together
+        // Perform peak shift, if there are any peaks
         for (int i = 0; i < NUM_PITCH_SHIFTS; i++) {
-            shift_peaks_int(pitch_shift_factors[i], run_phase_comp);
+            shift_peaks_int(pitch_shift_factors[i], pitch_shift_gains[i], run_phase_comp);
         }
     } else {
-        memcpy(tx_iFFT, rx_FFT, FFT_MOD_SIZE * 2 * sizeof(int)); // Copy RX->TX
-        reset_phase_comp_arr(run_phase_comp); // If no peaks, reset running phase compensation
+        // Otherwise reset phase compensation array
+        reset_phase_comp_arr(run_phase_comp);
     }
 
     // Calculate magnitudes
@@ -333,7 +336,7 @@ void proc_audio_data(void* pvParameters)
         unsigned int start_cc = dsp_get_cpu_cycle_count();
 
         // Modify data
-        audio_data_modification(txBuffer, rxBuffer);
+        audio_data_modification(rxBuffer, txBuffer);
         
         unsigned int end_cc = dsp_get_cpu_cycle_count();
 
