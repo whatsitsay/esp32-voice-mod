@@ -108,11 +108,11 @@ __attribute__((aligned(16))) float tx_FFT_mag[PLOT_LEN]; // For debug only
 
 // Lookup table for pitch shift factors
 #define NUM_PITCH_SHIFTS (2)
-static float pitch_shift_factors[] = {
+static const float PITCH_SHIFT_FACTORS[] = {
     0.75, // Lower Fifth
     1.2, // Minor Third
 };
-static float pitch_shift_gains[] = {
+static const float PITCH_SHIFT_GAINS[] = {
     1.2, // Lower fifth
     0.75, // Minor third
 };
@@ -211,7 +211,7 @@ void audio_data_modification(int* rxBuffer, int* txBuffer) {
     if (num_peaks > 0) {
         // Perform peak shift, if there are any peaks
         for (int i = 0; i < NUM_PITCH_SHIFTS; i++) {
-            shift_peaks_int(pitch_shift_factors[i], pitch_shift_gains[i], run_phase_comp);
+            shift_peaks_int(PITCH_SHIFT_FACTORS[i], PITCH_SHIFT_GAINS[i], run_phase_comp);
         }
     } else {
         // Otherwise reset phase compensation array
