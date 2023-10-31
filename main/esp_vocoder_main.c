@@ -31,6 +31,7 @@
 // Local libraries
 #include <es8388.h>
 #include <algo_common.h>
+#include <filters.h>
 #include <peak_shift.h>
 
 // Number of samples
@@ -51,6 +52,9 @@ __attribute__((aligned(16))) float tx_iFFT[N_SAMPLES * 2];
 __attribute__((aligned(16))) float prev_rx_FFT[2 * FFT_MOD_SIZE]; // Needed for instantaneous angle calc
 __attribute__((aligned(16))) float rx_FFT_mag[FFT_MOD_SIZE]; // Needed for peak shifting
 __attribute__((aligned(16))) float run_phase_comp[2 * FFT_MOD_SIZE]; // Cumulative phase compensation buffer
+
+// Array of impulse frequency response coefficients
+__attribute__((aligned(16))) float reverb_coeffs[2 * FFT_MOD_SIZE];
 
 // Stats trackers
 static unsigned int loop_count  = 0;
@@ -212,8 +216,18 @@ void audio_data_modification(int* rxBuffer, int* txBuffer) {
             shift_peaks_int(pitch_shift_factors[i], run_phase_comp);
         }
     } else {
-        memcpy(tx_iFFT, rx_FFT, FFT_MOD_SIZE * 2 * sizeof(int)); // Copy RX->TX
+        memcpy(tx_iFFT, rx_FFT, FFT_MOD_SIZE * 2 * sizeof(float)); // Copy RX->TX
         reset_phase_comp_arr(run_phase_comp); // If no peaks, reset running phase compensation
+    }
+
+    // Apply Schroeder reverb for added effect by multiplying element-wise
+    // with frequency response
+    for (int k = 0; k < FFT_MOD_SIZE; k++) {
+        int real_idx = 2 * k;
+        int imag_idx = 2 * k + 1;
+        mult_complex(tx_iFFT[real_idx], tx_iFFT[imag_idx],
+                     reverb_coeffs[real_idx], reverb_coeffs[imag_idx],
+                     &tx_iFFT[real_idx], &tx_iFFT[imag_idx]);
     }
 
     // Calculate magnitudes
@@ -455,6 +469,9 @@ void app_main(void)
 
     // Initialize FFT coefficients
     dsps_fft2r_init_fc32(NULL, N);
+
+    // Initialize reverb coefficients
+    init_reverb_coeffs(reverb_coeffs, FFT_MOD_SIZE, I2S_SAMPLING_FREQ_HZ);
 
     // Set peak shift algorithm config
     peak_shift_cfg_t cfg = {

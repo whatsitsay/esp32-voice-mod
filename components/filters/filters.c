@@ -16,8 +16,8 @@
 #include <inttypes.h>
 #include "sdkconfig.h"
 #include "esp_err.h"
-#include "filters.h"
 #include <algo_common.h>
+#include "filters.h"
 
 void allpass_filter(float ap_gain, int ap_angle_idx, float in_real, float in_imag, float* out_real, float* out_imag)
 {
@@ -52,4 +52,59 @@ void comb_filter(float comb_gain, int comb_angle_idx, float in_real, float in_im
 
   // Multiply by input, store in output
   mult_complex(comb_real, comb_imag, in_real, in_imag, out_real, out_imag);
+}
+
+void init_reverb_coeffs(float* reverb_coeffs, int arr_length, int sampling_freq_hz)
+{
+    // Calculate all gains and store in temporary luts
+    float comb_gain[] = {
+        REVERB_FILTER_GAIN(REVERB_COMB1_TAU_MS, REVERB_COMB_RVT_MS),
+        REVERB_FILTER_GAIN(REVERB_COMB2_TAU_MS, REVERB_COMB_RVT_MS),
+        REVERB_FILTER_GAIN(REVERB_COMB3_TAU_MS, REVERB_COMB_RVT_MS),
+        REVERB_FILTER_GAIN(REVERB_COMB4_TAU_MS, REVERB_COMB_RVT_MS)
+    };
+    float ap_gain[] = {
+        REVERB_FILTER_GAIN(REVERB_AP1_TAU_MS, REVERB_AP1_RVT_MS),
+        REVERB_FILTER_GAIN(REVERB_AP2_TAU_MS, REVERB_AP2_RVT_MS)
+    };
+
+
+    // Calculate all delay indicies, which will be delay (loop) time x sampling frequency
+    int comb_delay_idx[] = {
+        roundf(REVERB_COMB1_TAU_MS * sampling_freq_hz / 1000.0),
+        roundf(REVERB_COMB2_TAU_MS * sampling_freq_hz / 1000.0),
+        roundf(REVERB_COMB3_TAU_MS * sampling_freq_hz / 1000.0),
+        roundf(REVERB_COMB4_TAU_MS * sampling_freq_hz / 1000.0)
+    };
+    int ap_delay_idx[] = {
+        roundf(REVERB_AP1_TAU_MS * sampling_freq_hz / 1000.0),
+        roundf(REVERB_AP2_TAU_MS * sampling_freq_hz / 1000.0)
+    };
+
+    // Loop over coefficient LUT
+    for (int k = 0; k < arr_length; k++)
+    {
+        // Start with impulse 1 + 0j
+        float ap_real = 1; 
+        float ap_imag = 0;
+        // Cascade multiply allpass coefficients
+        for (int i = 0; i < REVERB_NUM_AP_FILTERS; i++) {
+            allpass_filter(ap_gain[i], ap_delay_idx[i] * k, ap_real, ap_imag, &ap_real, &ap_imag);
+        }
+
+        // Calculate comb filters in parallel, so each gets an impulse response as input
+        float comb_real = 0;
+        float comb_imag = 0;
+        for (int i = 0; i < REVERB_NUM_COMB_FILTERS; i++) {
+            float curr_comb_real, curr_comb_imag;
+            comb_filter(comb_gain[i], comb_delay_idx[i] * k, 1, 0, &curr_comb_real, &curr_comb_imag);
+            // Comb filters are summed, so add to running sum here
+            // Also correct for number of filters when adding
+            comb_real += curr_comb_real / REVERB_NUM_COMB_FILTERS;
+            comb_imag += curr_comb_imag / REVERB_NUM_COMB_FILTERS;
+        }
+
+        // Reverb coefficients will be product of AP and comb filters
+        mult_complex(ap_real, ap_imag, comb_real, comb_imag, reverb_coeffs + 2*k, reverb_coeffs + 2*k + 1);
+    }
 }
