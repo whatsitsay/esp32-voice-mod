@@ -280,7 +280,7 @@ void app_main(void)
             float rx_f = (float)(rxBuffer[2 * i] >> I2S_DOWNSHIFT);
             
             // Dot-multiply with Hann windows to reduce effect of edges
-            rx_FFT[2 * i] = rx_f * hann_win(i);
+            rx_FFT[2 * i] = rx_f * get_window(i);
             rx_FFT[2 * i + 1] = 0; // No complex component
         }
 

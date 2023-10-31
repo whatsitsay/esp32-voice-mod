@@ -34,3 +34,6 @@
 # Build outputs
 **/build/*
 **/dependencies.lock
+
+# Spreadsheet swap buffer
+~$*.xlsx

@@ -228,10 +228,10 @@ void audio_data_modification(int* txBuffer, int* rxBuffer) {
 
     // DEBUG: Create FFT magnitude plots
     for (int i = 0; i < N_SAMPLES; i++) {
-        rx_FFT[2 * i] = (float)rx_delay_line[i] * hann_win(i) / 256;
+        rx_FFT[2 * i] = (float)rx_delay_line[i] * get_window(i) / 256;
         rx_FFT[2 * i + 1] = 0;
 
-        tx_FFT[2 * i] = tx_delay_line[i] * hann_win(i) / 256;
+        tx_FFT[2 * i] = tx_delay_line[i] * get_window(i) / 256;
         tx_FFT[2 * i + 1] = 0;
     }
     calc_fft(rx_FFT, N);

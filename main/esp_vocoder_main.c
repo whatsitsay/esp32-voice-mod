@@ -6,7 +6,7 @@
  * Currently capable of the following vocal effects:
  * 1) Pitch-shifted chorus
  * 
- * @version 0.1
+ * @version 0.2
  * @date 2023-10-26
  * 
  * @copyright Copyright (c) 2023
@@ -118,7 +118,6 @@ static float pitch_shift_gains[] = {
 };
 
 ////// HELPER FUNCTIONS //////
-
 void print_task_stats(void* pvParameters)
 {
     const char* TAG = "Task Stats";
@@ -193,7 +192,7 @@ void audio_data_modification(int* rxBuffer, int* txBuffer) {
 
         // Dot-product with hann window
         // Downshift to prevent overflow (last 8 bits are always 0)
-        rx_FFT[2 * i] = (float)(rx_val >> I2S_DOWNSHIFT) * hann_win(i);
+        rx_FFT[2 * i] = (float)(rx_val >> I2S_DOWNSHIFT) * get_window(i);
         // Set imaginary component to 0
         rx_FFT[2 * i + 1] = 0;
     }
@@ -232,13 +231,13 @@ void audio_data_modification(int* rxBuffer, int* txBuffer) {
     for (int i = 0; i < HOP_SIZE; i++)
     {
         // Add-overlay beginning portion of iFFT into txBuffer
-        float tx_val = tx_iFFT[2 * i] * hann_win(i); // Window result
+        float tx_val = tx_iFFT[2 * i] * get_window(i); // Window result
         txBuffer[2 * i] = (int)(txBuffer_overlap[i] + tx_val); 
         txBuffer[2 * i] <<= I2S_DOWNSHIFT; // Increase int value
         txBuffer[2 * i + 1] = txBuffer[2 * i]; // Copy L and R
 
         // Store latter portion for use next loop
-        float tx_overlap_val = tx_iFFT[2 * (i + HOP_SIZE)] * hann_win(i + HOP_SIZE);
+        float tx_overlap_val = tx_iFFT[2 * (i + HOP_SIZE)] * get_window(i + HOP_SIZE);
         txBuffer_overlap[i] = tx_overlap_val;
     }
     xSemaphoreGive(xDbgMutex);

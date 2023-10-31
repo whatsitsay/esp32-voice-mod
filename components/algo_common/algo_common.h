@@ -133,13 +133,15 @@ void polar_to_complex(float mag, float angle, float* cpx_real, float* cpx_imag);
 float get_euler_coeff(int angle_idx, bool imag_comp);
 
 /**
- * @brief Get Hann window coefficient at the given index
+ * @brief Get window coefficient at the given index
+ * 
+ * Currently implemented to use root-Hann window for proper reconstruction
  * 
  * Defined for N=4096
  * 
  * @param idx - Current window index
  * @return float - Value of window at index
  */
-float hann_win(int idx);
+float get_window(int idx);
 
 #endif // __ALGO_COMMON_H__
