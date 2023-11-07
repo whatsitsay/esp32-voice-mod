@@ -10,6 +10,9 @@
  * 
  */
 
+#ifndef __PEAK_SHIFT__
+#define __PEAK_SHIFT__
+
 #define PEAK_THRESHOLD_DB (20) // Empirical TODO double-check
 
 typedef struct {
@@ -92,3 +95,5 @@ void print_local_peaks(void);
  * @param run_phase_comp_ptr - Pointer to array containing running phase rotation data
  */
 void shift_peaks_int(float shift_factor, float gain, float* run_phase_comp_ptr);
+
+#endif // __PEAK_SHIFT__

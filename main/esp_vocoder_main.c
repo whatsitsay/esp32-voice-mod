@@ -32,25 +32,7 @@
 #include <es8388.h>
 #include <algo_common.h>
 #include <peak_shift.h>
-
-// Number of samples
-#define HOP_SIZE (N_SAMPLES / 2) // Overlap 50%
-#define HOP_BUFFER_SIZE_B (2 * HOP_SIZE * 4) // == length of rx/tx buffers (bytes)
-// rx/tx buffers. Size doubled for L+R (even if only R is used)
-int N = N_SAMPLES;
-
-// I2S macros
-#define I2S_SAMPLING_FREQ_HZ (40960) // Lower for more even freq resolution
-#define I2S_DOWNSHIFT (8) // 24-bit precision, can downshift safely by byte for FFT calcs
-
-// FFT buffers
-__attribute__((aligned(16))) float rx_FFT[N_SAMPLES * 2]; // Will be complex
-__attribute__((aligned(16))) float tx_iFFT[N_SAMPLES * 2];
-// Peak shift buffers
-#define FFT_MOD_SIZE (N_SAMPLES/2 + 1) // +1 for midpoint N/2
-__attribute__((aligned(16))) float prev_rx_FFT[2 * FFT_MOD_SIZE]; // Needed for instantaneous angle calc
-__attribute__((aligned(16))) float rx_FFT_mag[FFT_MOD_SIZE]; // Needed for peak shifting
-__attribute__((aligned(16))) float run_phase_comp[2 * FFT_MOD_SIZE]; // Cumulative phase compensation buffer
+#include "esp_vocoder_main.h"
 
 // Stats trackers
 static unsigned int loop_count  = 0;
@@ -58,64 +40,6 @@ static float dsp_calc_time_sum  = 0;
 static float num_peaks_sum      = 0;
 static unsigned int rx_ovfl_hit = 0;
 static unsigned int tx_ovfl_hit = 0;
-
-// Ping-pong buffers
-#define NUM_BUFFERS (2)
-int* txBuffers[NUM_BUFFERS];
-int* rxBuffers[NUM_BUFFERS];
-int i2s_idx, dsp_idx; // I2S idx should be the same between TX/RX, but opposite from DSP
-#define I2S_IDX_START (0)
-#define DSP_IDX_START (1)
-
-// Overlap buffers
-float txBuffer_overlap[HOP_SIZE];
-float rxBuffer_overlap[HOP_SIZE];
-
-// Stream handles
-i2s_chan_handle_t rx_handle, tx_handle;
-
-// Task handles
-static TaskHandle_t xDSPTaskHandle, xRxTaskHandle, xTxTaskHandle, xTaskStatsHandle;
-#define DSP_TASK_STACK_SIZE (16384u) // Check watermark!
-#define DSP_TASK_CORE (0)
-#define RX_TASK_STACK_SIZE (4096u) // Check watermark!
-#define RX_TASK_CORE (1)
-#define TX_TASK_STACK_SIZE (4096u) // Check watermark!
-#define TX_TASK_CORE (1)
-#define TASK_STATS_STACK_SIZE (4096u) // Check watermark!
-#define TASK_STATS_CORE (0)
-
-#define DSP_TASK_PRIORITY (1U) // Just above idle
-#define TX_TASK_PRIORITY (10U) // Higher due to it being blocked
-#define RX_TASK_PRIORITY (10U) // Higher still since it will spend the most time blocked
-#define TASK_STATS_PRIORITY (0U) // == IDLE PRIO
-
-// Event group
-EventGroupHandle_t xTaskSyncBits;
-#define DSP_TASK_BIT      ( 1 << 0 )
-#define TX_TASK_BIT       ( 1 << 1 )
-#define RX_TASK_BIT       ( 1 << 2 )
-#define SWAP_COMPLETE_BIT ( 1 << 3 )
-#define BUFF_SWAP_BITS (DSP_TASK_BIT | TX_TASK_BIT | RX_TASK_BIT) // Sync to initiate buffer swap
-#define ALL_SYNC_BITS  (BUFF_SWAP_BITS | SWAP_COMPLETE_BIT) // Sync to move on
-#define SYNC_TIMEOUT_TICKS  (500 / portTICK_PERIOD_MS) // Raise error if not synced by this point
-
-// Semaphores
-static SemaphoreHandle_t xDbgMutex;
-
-#define PLOT_LEN (128)
-__attribute__((aligned(16))) float tx_FFT_mag[PLOT_LEN]; // For debug only
-
-// Lookup table for pitch shift factors
-#define NUM_PITCH_SHIFTS (2)
-static const float PITCH_SHIFT_FACTORS[] = {
-    0.75, // Lower Fifth
-    1.2, // Minor Third
-};
-static const float PITCH_SHIFT_GAINS[] = {
-    1.1, // Lower fifth
-    0.75, // Minor third
-};
 
 ////// HELPER FUNCTIONS //////
 void print_task_stats(void* pvParameters)
