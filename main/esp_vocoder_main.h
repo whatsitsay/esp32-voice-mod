@@ -64,6 +64,13 @@ int i2s_idx, dsp_idx; // I2S idx should be the same between TX/RX, but opposite 
 float txBuffer_overlap[HOP_SIZE];
 float rxBuffer_overlap[HOP_SIZE];
 
+// Stats trackers
+static unsigned int loop_count  = 0;
+static float dsp_calc_time_sum  = 0;
+static float num_peaks_sum      = 0;
+static unsigned int rx_ovfl_hit = 0;
+static unsigned int tx_ovfl_hit = 0;
+
 // Stream handles
 i2s_chan_handle_t rx_handle, tx_handle;
 
@@ -94,7 +101,7 @@ EventGroupHandle_t xTaskSyncBits;
 #define SYNC_TIMEOUT_TICKS  (500 / portTICK_PERIOD_MS) // Raise error if not synced by this point
 
 // Semaphores
-SemaphoreHandle_t xDbgMutex;
+SemaphoreHandle_t xDbgMutex, xModeSwitchSem;
 
 #define PLOT_LEN (128)
 __attribute__((aligned(16))) float tx_FFT_mag[PLOT_LEN]; // For debug only
@@ -109,5 +116,16 @@ const float PITCH_SHIFT_GAINS[] = {
     1.1, // Lower fifth
     0.75, // Minor third
 };
+
+// Mode switch
+typedef enum {
+  PASSTHROUGH,
+  LOW_PITCH,
+  HIGH_PITCH,
+  CHORUS,
+  MAX_VOCODER_MODES
+} vocoder_mode_e;
+static vocoder_mode_e _vocoder_mode;
+#define MODE_SWITCH_PIN (GPIO_NUM_36)
 
 #endif // __ESP_VOCODER_MAIN__

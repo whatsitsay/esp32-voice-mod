@@ -14,6 +14,8 @@
 #define MAX(x, y) ((x > y) ? x : y)
 #define MIN(x, y) ((x < y) ? x : y)
 #define FFT_DB_BASE (1e5) // Base value for comparison when calculating dB values of magnitude
+// Helper function for creating bit masks
+#define BITMASK(len, offset) (((1 << len) - 1) << offset)
 
 #define N_SAMPLES (4096) // Number of samples for FFT operations
 

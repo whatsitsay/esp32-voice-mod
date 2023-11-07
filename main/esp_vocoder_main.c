@@ -27,19 +27,14 @@
 #include "driver/i2s_std.h"
 #include "driver/gpio.h"
 #include "esp_dsp.h"
+#include "esp_timer.h"
 
 // Local libraries
 #include <es8388.h>
 #include <algo_common.h>
 #include <peak_shift.h>
+#include <gpio_button.h>
 #include "esp_vocoder_main.h"
-
-// Stats trackers
-static unsigned int loop_count  = 0;
-static float dsp_calc_time_sum  = 0;
-static float num_peaks_sum      = 0;
-static unsigned int rx_ovfl_hit = 0;
-static unsigned int tx_ovfl_hit = 0;
 
 ////// HELPER FUNCTIONS //////
 void print_task_stats(void* pvParameters)
@@ -88,6 +83,7 @@ void print_task_stats(void* pvParameters)
         dsps_view(rx_FFT_mag_cpy, PLOT_LEN, PLOT_LEN, 10, 0, 40, 'x');
         ESP_LOGI(TAG, "Output FT magnitude (dB):");
         dsps_view(tx_FFT_mag_cpy, PLOT_LEN, PLOT_LEN, 10, 0, 40, 'o');
+        ESP_LOGW(TAG, "Current vocoder mode: %0d", (int)_vocoder_mode);
     }
 }
 
@@ -241,6 +237,22 @@ static IRAM_ATTR bool tx_sent_overflow(i2s_chan_handle_t handle, i2s_event_data_
     tx_ovfl_hit++;
     
     return false;
+}
+
+static IRAM_ATTR void mode_switch_cb(void* args)
+{
+    // Check value
+    int read_val = gpio_get_level(MODE_SWITCH_PIN);
+
+    // Only give mode switch semaphore if value is low
+    if (!read_val) {
+        BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+        xSemaphoreGiveFromISR(xModeSwitchSem, &xHigherPriorityTaskWoken);
+        portYIELD_FROM_ISR( xHigherPriorityTaskWoken );
+    }
+
+    // Re-enable GPIO pin interrupt
+    gpio_intr_enable(MODE_SWITCH_PIN);
 }
 
 ///// TASKS ///// 
@@ -404,8 +416,14 @@ void app_main(void)
     // Create mutex for debug buffers
     xDbgMutex = xSemaphoreCreateMutex();
 
+    // Create semaphore for mode switch
+    xModeSwitchSem = xSemaphoreCreateBinary();
+
     // Instantiate event group for task sync
     xTaskSyncBits = xEventGroupCreate();
+
+    // Initiate mode switch button
+    ESP_ERROR_CHECK(init_gpio_button(MODE_SWITCH_PIN, &mode_switch_cb));
 
     // Instantiate I2S callbacks
     i2s_event_callbacks_t cbs = {
@@ -494,6 +512,12 @@ void app_main(void)
 
         // Check headphone jack toggle
         es_toggle_power_amp();
+
+        // Switch mode if button is hit
+        if (xSemaphoreTake(xModeSwitchSem, 0) == pdTRUE) {
+            _vocoder_mode++;
+            _vocoder_mode %= MAX_VOCODER_MODES;
+        }
 
         // Set remaining bit
         uxReturn = xEventGroupSync(xTaskSyncBits,
