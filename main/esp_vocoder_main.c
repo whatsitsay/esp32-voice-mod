@@ -113,7 +113,7 @@ static const float PITCH_SHIFT_FACTORS[] = {
     1.2, // Minor Third
 };
 static const float PITCH_SHIFT_GAINS[] = {
-    1.2, // Lower fifth
+    1.1, // Lower fifth
     0.75, // Minor third
 };
 
