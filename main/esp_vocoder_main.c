@@ -83,7 +83,7 @@ void print_task_stats(void* pvParameters)
         dsps_view(rx_FFT_mag_cpy, PLOT_LEN, PLOT_LEN, 10, 0, 40, 'x');
         ESP_LOGI(TAG, "Output FT magnitude (dB):");
         dsps_view(tx_FFT_mag_cpy, PLOT_LEN, PLOT_LEN, 10, 0, 40, 'o');
-        ESP_LOGW(TAG, "Current vocoder mode: %0d", (int)_vocoder_mode);
+        ESP_LOGW(TAG, "Current vocoder mode: %0d, ISR hit %0d times", (int)_vocoder_mode, gpio_isr_hit);
     }
 }
 
@@ -241,11 +241,14 @@ static IRAM_ATTR bool tx_sent_overflow(i2s_chan_handle_t handle, i2s_event_data_
 
 static IRAM_ATTR void mode_switch_cb(void* args)
 {
+    // Increment running counter
+    gpio_isr_hit++;
+
     // Check value
     int read_val = gpio_get_level(MODE_SWITCH_PIN);
 
     // Only give mode switch semaphore if value is low
-    if (!read_val) {
+    if (read_val == 0) {
         BaseType_t xHigherPriorityTaskWoken = pdFALSE;
         xSemaphoreGiveFromISR(xModeSwitchSem, &xHigherPriorityTaskWoken);
         portYIELD_FROM_ISR( xHigherPriorityTaskWoken );

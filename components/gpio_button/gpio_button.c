@@ -38,8 +38,8 @@ esp_err_t init_gpio_button(gpio_num_t gpio_num, esp_timer_cb_t button_callback)
   // No pullup or pulldown internally (handled by circuit)
   err |= gpio_pullup_dis(gpio_num);
   err |= gpio_pulldown_dis(gpio_num);
-  err |= gpio_set_intr_type(gpio_num, GPIO_INTR_NEGEDGE); // External pullup
   err |= gpio_install_isr_service(0);
+  err |= gpio_set_intr_type(gpio_num, GPIO_INTR_NEGEDGE); // External pullup
   err |= gpio_isr_handler_add(gpio_num, debounce_callback, (void *)(&cfg));
   err |= gpio_intr_enable(gpio_num);
 

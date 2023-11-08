@@ -70,6 +70,7 @@ static float dsp_calc_time_sum  = 0;
 static float num_peaks_sum      = 0;
 static unsigned int rx_ovfl_hit = 0;
 static unsigned int tx_ovfl_hit = 0;
+static volatile unsigned gpio_isr_hit = 0;
 
 // Stream handles
 i2s_chan_handle_t rx_handle, tx_handle;
