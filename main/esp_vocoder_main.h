@@ -100,14 +100,17 @@ SemaphoreHandle_t xDbgMutex;
 __attribute__((aligned(16))) float tx_FFT_mag[PLOT_LEN]; // For debug only
 
 // Lookup table for pitch shift factors
-#define NUM_PITCH_SHIFTS (2)
+#define NUM_PITCH_SHIFTS (3)
+// Pitch-shift for minor 7th where original sound is 5th
 const float PITCH_SHIFT_FACTORS[] = {
-    0.75, // Lower Fifth
-    1.2, // Minor Third
+  0.66667, // Lower Fourth ("Tonic")
+  0.8, // Lower 6th flat (Minor third of new tonic, 2/3 * 6/5 = 4/5)
+  1.2, // Minor Third (Flat seventh of new tonic)
 };
 const float PITCH_SHIFT_GAINS[] = {
-    1.1, // Lower fifth
-    0.75, // Minor third
+  1.1, // Lower fourth
+  1.0, // Lower sixth flat
+  0.8, // Minor third
 };
 
 #endif // __ESP_VOCODER_MAIN__
