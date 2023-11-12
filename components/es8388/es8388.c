@@ -316,7 +316,11 @@ void es8388_config()
     //	es_mode_t  = ES_MODULE_ADC_DAC;
 
     es_bits_length_t bits_length = BIT_LENGTH_32BITS;
+#ifdef INMP441_MIC
     es_module_t module = ES_MODULE_DAC; // Use INMP441 for microphone instead of built-in mics
+#else
+    es_module_t module = ES_MODULE_ADC_DAC;
+#endif
     es_format_t fmt = ES_I2S_LEFT;
 
     es8388_config_i2s( bits_length, module, fmt );
@@ -348,7 +352,12 @@ void es_i2s_init(i2s_chan_handle_t* tx_handle, i2s_chan_handle_t* rx_handle, int
     i2s_chan_config_t i2s_chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
     i2s_chan_cfg.dma_desc_num  = 3;
     i2s_chan_cfg.dma_frame_num = 511; // Same as buffer length?
+#ifdef INMP441_MIC
     i2s_new_channel(&i2s_chan_cfg, tx_handle, NULL);
+#else
+    // Use internal mics
+    i2s_new_channel(&i2s_chan_cfg, tx_handle, rx_handle);
+#endif
 
     i2s_std_config_t std_cfg = {
         .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(i2s_sample_rate),
@@ -367,8 +376,11 @@ void es_i2s_init(i2s_chan_handle_t* tx_handle, i2s_chan_handle_t* rx_handle, int
         }
     };
     i2s_channel_init_std_mode(*tx_handle, &std_cfg);
-    // i2s_channel_init_std_mode(*rx_handle, &std_cfg);
+#ifndef INMP441_MIC
+    i2s_channel_init_std_mode(*rx_handle, &std_cfg);
+#endif
 
+#ifdef INMP441_MIC
     // Initialize INMP441 microphone as RX channel
     // Set L/R low to mimic ground (set channel as "L")
     gpio_set_direction(GPIO_NUM_19, GPIO_MODE_OUTPUT);
@@ -396,4 +408,5 @@ void es_i2s_init(i2s_chan_handle_t* tx_handle, i2s_chan_handle_t* rx_handle, int
         }
     };
     i2s_channel_init_std_mode(*rx_handle, &mic_cfg);
+#endif
 }

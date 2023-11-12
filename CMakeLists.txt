@@ -7,3 +7,6 @@ set(REPO_PATH "C:/Users/Gabriel/esp32-voice-mod")
 set(COMPONENTS_PATH "${REPO_PATH}/components")
 list(APPEND EXTRA_COMPONENT_DIRS ${COMPONENTS_PATH})
 project(esp_vocoder)
+# Set flag for INMP441 external mic
+# Otherwise use on-board mics
+# idf_build_set_property(COMPILE_DEFINITIONS "-DINMP441_MIC" APPEND)
