@@ -13,7 +13,13 @@
 #ifndef __PEAK_SHIFT__
 #define __PEAK_SHIFT__
 
-#define PEAK_THRESHOLD_DB (20) // Empirical TODO double-check
+#include <openbsd_tree.h>
+// Minimum threshold to consider magnitude a peak
+// Value is empirical, based on testing of sound quality with peak-finding algorithm and calc time
+#define PEAK_THRESHOLD_DB (0)
+#define MAX_PEAKS (150) // Maximum number of peaks stored for moving/comparison
+#define MAX_PRINT_PEAKS (5) // To prevent overloading
+#define BAND_DIV_NBINS (16) // Number of bins for each 'band' when calculating peaks
 
 typedef struct {
   int num_samples;            // Number of samples N per FFT (*full* FFT, not just relevant portion)
@@ -27,13 +33,18 @@ typedef struct {
 
 typedef struct {
   int idx;              // Index of peak in FFT array (non-doubled)
+  float mag_db;         // Magnitude at peak in dB
   int left_bound;       // Leftmost index of ROI (non-doubled)
   int right_bound;      // Rightmost index of ROI (non-doubled)
   float inst_freq;      // Instantaneous frequency represented by peak
   float phase;          // Phase value of peak
 } peak_data_t;
 
-#define MAX_PEAKS (150) // Somewhat of a fudge factor to limit memory footprint
+// Tree node, for self-sorting
+struct peak_node_t{
+  SPLAY_ENTRY(peak_node_t) entry;
+  peak_data_t data;
+};
 
 /**
  * @brief Store peak shift algorithm configuration and pointers

@@ -13,18 +13,31 @@
 #include "peak_shift.h"
 #include <math.h>
 #include <string.h>
+#include <stddef.h>
+#include "freertos/FreeRTOS.h"
 #include "sdkconfig.h"
 #include "esp_err.h"
 #include "esp_dsp.h"
 #include <algo_common.h>
-
-#define NUM_NEIGHBORS (2) // For peak detection
+#include <openbsd_tree.h>
 
 static peak_shift_cfg_t* peak_shift_cfg;
-static peak_data_t peak_data[MAX_PEAKS];
+static struct peak_node_t peak_data[MAX_PEAKS]; // Allocate node data
 static int num_peaks;
 
 const char* TAG = "Peak Shift Algorithm";
+
+// Splay tree instantiation
+// Comparison function for peak splay tree
+int _peak_comp(struct peak_node_t* n1, struct peak_node_t* n2) {
+  // Compare magnitudes of nodes
+  return (n1->data.mag_db < n2->data.mag_db ? -1 : 
+          n1->data.mag_db > n2->data.mag_db ? 1 : 0);
+}
+// Create self-organizing tree of entries, so that it can be kept at a constant number
+SPLAY_HEAD(peak_tree, peak_node_t) _head = SPLAY_INITIALIZER(&_head);
+SPLAY_PROTOTYPE(peak_tree, peak_node_t, entry, _peak_comp)
+SPLAY_GENERATE(peak_tree, peak_node_t, entry, _peak_comp)
 
 void init_peak_shift_cfg(peak_shift_cfg_t* cfg)
 {
@@ -43,10 +56,23 @@ void reset_phase_comp_arr(float* run_phase_comp_ptr)
   }
 }
 
+// Helper function for resetting peak tree
+static void _reset_peak_tree() {
+  if (SPLAY_EMPTY(&_head)) return; // Skip
+  // Iterate over tree, deleting all nodes
+  struct peak_node_t *p, *nxt;
+  for (p = SPLAY_MIN(peak_tree, &_head); p != NULL; p = nxt) {
+    nxt = SPLAY_NEXT(peak_tree, &_head, p);
+    SPLAY_REMOVE(peak_tree, &_head, p);
+  }
+
+  num_peaks = 0;
+}
+
 int find_local_peaks(void)
 {
-  // Init running counter of number of peaks
-  num_peaks = 0;
+  // Reset peak tree
+  _reset_peak_tree();
 
   // Set var for num samples, for ease of reference
   int num_samples = peak_shift_cfg->num_samples;
@@ -57,75 +83,90 @@ int find_local_peaks(void)
   calc_fft_mag_db(peak_shift_cfg->fft_ptr, peak_shift_cfg->fft_mag_ptr, num_samples / 2 + 1);
   float* mag_arr = peak_shift_cfg->fft_mag_ptr;
 
+  struct peak_node_t *curr_peak = NULL, *min_peak = NULL;
+
   // Iterate over magnitude array for indicies within bounds of peak detection,
   // taking into acount comparisons with previous/next neighbors
   // Only iterate through half of FFT, as it will be reflected by midpoint (Nyquist freq)
-  for (int i = NUM_NEIGHBORS; i <= peak_shift_cfg->num_samples / 2 - NUM_NEIGHBORS; i++)
+  for (int i = 0; i <= num_samples / 2; i++)
   {
-    float check_val = mag_arr[i];
+    float curr_mag = mag_arr[i];
     // First ensure check val is over threshold, to prevent noise
-    if (check_val < PEAK_THRESHOLD_DB) continue;
-    // Based on the paper used for the algorithm, a "peak" is defined as an index
+    if (curr_mag < PEAK_THRESHOLD_DB) continue;
+    // If not in the lowest band, a "peak" is loosely defined as an index
     // whose magnitude is larger than it's two neighbors in each direction (left
     // and right). Supposedly, this should be good enough in practice
-    if (check_val < mag_arr[i-2]) continue;
-    if (check_val < mag_arr[i-1]) continue;
-    if (check_val < mag_arr[i+1]) continue;
-    if (check_val < mag_arr[i+2]) continue;
-
-    // Ensure we haven't reached the max number of peaks
-    // Otherwise, throw error by returning -1
-    if (num_peaks >= MAX_PEAKS) {
-      ESP_LOGE(TAG, "Reached maximum number of peaks!");
-      return -1;
+    if (i >= BAND_DIV_NBINS) {
+      if (curr_mag < mag_arr[i-2]) continue;
+      if (curr_mag < mag_arr[i-1]) continue;
+      // Only check next values if there are any (otherwise symmetry will make a peak towards the end)
+      if (i+1 <= num_samples / 2 && curr_mag < mag_arr[i+1]) continue;
+      if (i+2 <= num_samples / 2 && curr_mag < mag_arr[i+2]) continue;
     }
 
-    // If past those checks, value is local maxima
-    // Store index in peak data array
-    peak_data[num_peaks].idx = i;
+    // If past these checks, value is local maxima
+    // Store in self-sorting tree
+    if (num_peaks < MAX_PEAKS) {
+      // If num peaks still less than max, return next in array and increment total count
+      curr_peak = &peak_data[num_peaks];
+      num_peaks++;
+    } else {
+      // Else, check against tree minimum
+      if (min_peak->data.mag_db < curr_mag) {
+        // Replace at pointer, by removing min node from tree
+        // Should return pointer to node itself
+        curr_peak = SPLAY_REMOVE(peak_tree, &_head, min_peak);
+      } else {
+        // Not worth replacing, move on
+        continue;
+      }
+    }
+
+    // Verify peak is not null
+    configASSERT( curr_peak  != NULL );
+
+    // Store magnitude and index in peak data
+    curr_peak->data.mag_db = curr_mag;
+    curr_peak->data.idx    = i;
 
     // Store bounds
-    if (num_peaks == 0) 
-    {
-      // For first peak, left bound will be first index
-      // Right bound will be stored later on
-      peak_data[num_peaks].left_bound = 0;
-    }
-    else 
-    {
-      // Each region of influence (ROI) will be defined as between the midpoints
-      // of each peak
-      int midpoint = (peak_data[num_peaks].idx + peak_data[num_peaks - 1].idx) / 2;
-      // Store previous peak right bound as midpoint
-      peak_data[num_peaks - 1].right_bound = midpoint;
-      // Store current peak left bound as midpoint+1
-      // Right bound will be stored later on
-      peak_data[num_peaks].left_bound = midpoint + 1;
-    }
+    // Based on the 'CHALLENGE' project (Bargun, Serafin, Erkut 2023), instead of just using midpoints, correlate
+    // adjacent bins only based on band. Lower frequency => less neighbors
+    // Current math is for every band interval, number of adjacent bins to sync goes increments
+    // by 1
+    int num_neighbors = i / BAND_DIV_NBINS;
+    curr_peak->data.left_bound = i - num_neighbors;
+    // For right bound, cap at Nyquist bin
+    curr_peak->data.right_bound = MIN(i + num_neighbors, num_samples/2);
 
     // Store phase
-    peak_data[num_peaks].phase = get_idx_phase(peak_shift_cfg->fft_ptr, i);
+    curr_peak->data.phase = get_idx_phase(peak_shift_cfg->fft_ptr, i);
 
     // Better estimate actual frequency of peak using phase difference
     // with previous frame (back calculation only, as this is real-time)
-    float phase_diff = peak_data[num_peaks].phase - get_idx_phase(peak_shift_cfg->fft_prev_ptr, i);
+    float phase_diff = curr_peak->data.phase - get_idx_phase(peak_shift_cfg->fft_prev_ptr, i);
     // Bound between pi and -pi
     phase_diff = MIN(M_PI, phase_diff);
     phase_diff = MAX(-M_PI, phase_diff);
     // Correction is defined as the ratio of this phase diff over 2pi, times the bin frequency step
     float freq_diff = (phase_diff * peak_shift_cfg->bin_freq_step) / (2 * M_PI);
     // Correct for instantaneous frequency estimate
-    peak_data[num_peaks].inst_freq = (i * peak_shift_cfg->bin_freq_step) + freq_diff;
+    curr_peak->data.inst_freq = (i * peak_shift_cfg->bin_freq_step) + freq_diff;
 
-    // Increment num_peaks
-    num_peaks++;
-  }
+    // Insert into tree
+    // This allows for the minimum to always be automatically available
+    if (SPLAY_INSERT(peak_tree, &_head, curr_peak) != NULL ) {
+      // If null, insert failed. Try incrementing magnitude slightly and try again (could be similar value)
+      curr_peak->data.mag_db += 0.0001;
+      // Fail if NULL once more
+      configASSERT( SPLAY_INSERT(peak_tree, &_head, curr_peak) == NULL );
+    }
 
-  // If at least one peak, store last rightmost bound as rightmost index
-  // Again, this will be the midpoint due to reflection
-  if (num_peaks > 0)
-  {
-    peak_data[num_peaks-1].right_bound = (peak_shift_cfg->num_samples/2);
+    // If at maximum number of peaks, get minimum
+    if (num_peaks == MAX_PEAKS) {
+      min_peak = SPLAY_MIN(peak_tree, &_head);
+      configASSERT( min_peak != NULL );
+    }
   }
 
   // Return number of peaks
@@ -137,16 +178,29 @@ void print_local_peaks(void)
   ESP_LOGW(TAG, "%d peaks detected", num_peaks);
   if (num_peaks == 0) return;
 
-  char peak_str[1024] = "Peak Values (Hz): ";
-  
-  for (int i = 0; i < num_peaks; i++) 
+  char peak_str[1024];
+  // Copy in initial string. Can be done without size, as it is much less than buffer length
+  sprintf(peak_str, "%d Largest Peak Values (Hz): ", MAX_PRINT_PEAKS);
+
+  struct peak_node_t* curr_peak = SPLAY_MIN(peak_tree, &_head);
+  for (int i = 0; i < num_peaks; i++)
   {
     char peak_val[50];
-    int peak_freq_hz = roundf(peak_data[i].inst_freq);
-    int left_bound = peak_data[i].left_bound * peak_shift_cfg->bin_freq_step;
-    int right_bound = peak_data[i].right_bound * peak_shift_cfg->bin_freq_step;
-    sprintf(peak_val, "%d (%d,%d) ", peak_freq_hz, left_bound, right_bound);
-    strcat(peak_str, peak_val);
+    // Iterate through tree until last few entries
+    // Need to iterate this way given unidirectional nature of tree
+    // (I.e., can only traverse with SPLAY_NEXT to next higher value)
+    if (i > num_peaks - 1 - MAX_PRINT_PEAKS)
+    {
+      configASSERT(curr_peak != NULL);
+      int peak_freq_hz = roundf(curr_peak->data.inst_freq);
+      float peak_mag_db = curr_peak->data.mag_db;
+      int left_bound = curr_peak->data.left_bound * peak_shift_cfg->bin_freq_step;
+      int right_bound = curr_peak->data.right_bound * peak_shift_cfg->bin_freq_step;
+      sprintf(peak_val, "%d (%.2f dB, %d-%d) ", peak_freq_hz, peak_mag_db, left_bound, right_bound);
+      strcat(peak_str, peak_val);
+    }
+
+    curr_peak = SPLAY_NEXT(peak_tree, &_head, curr_peak);
   }
 
   ESP_LOGW(TAG, "%s", peak_str);
@@ -156,21 +210,23 @@ void shift_peaks_int(float shift_factor, float shift_gain, float* run_phase_comp
 {
   int num_samples = peak_shift_cfg->num_samples;
 
-  // Iterate through all ROI
-  for (int i = 0; i < num_peaks; i++)
+  struct peak_node_t* curr_peak;
+
+  // Iterate through all ROI by iterating through tree
+  SPLAY_FOREACH(curr_peak, peak_tree, &_head) 
   {
     // Calculate the desired change in frequency based on the peak instantaneous
     // frequency and the shift factor
-    float delta_f_raw = (shift_factor - 1) * peak_data[i].inst_freq;
+    float delta_f_raw = (shift_factor - 1) * curr_peak->data.inst_freq;
 
     // Round to get the index shift for this ROI
     int idx_shift = (int)roundf(delta_f_raw / peak_shift_cfg->bin_freq_step);
-    int new_roi_start = peak_data[i].left_bound + idx_shift;
-    int new_roi_end   = peak_data[i].right_bound + idx_shift;
+    int new_roi_start = curr_peak->data.left_bound + idx_shift;
+    int new_roi_end   = curr_peak->data.right_bound + idx_shift;
 
     // Cap at high frequency boundary unless peak actually surpasses value
     // TODO: may be worth setting some threshold value...
-    int new_peak_idx  = peak_data[i].idx + idx_shift;
+    int new_peak_idx  = curr_peak->data.idx + idx_shift;
     if (new_roi_end   > num_samples/2 && new_peak_idx <= num_samples/2) {
       new_roi_end = num_samples / 2;
     }
