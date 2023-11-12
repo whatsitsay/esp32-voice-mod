@@ -13,7 +13,7 @@
 
 #define MAX(x, y) ((x > y) ? x : y)
 #define MIN(x, y) ((x < y) ? x : y)
-#define FFT_DB_BASE (1e5) // Base value for comparison when calculating dB values of magnitude
+#define FFT_DB_BASE (1e4) // Base value for comparison when calculating dB values of magnitude
 
 #define N_SAMPLES (4096) // Number of samples for FFT operations
 
