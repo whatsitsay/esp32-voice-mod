@@ -93,18 +93,25 @@ int find_local_peaks(void)
     float curr_mag = mag_arr[i];
     // First ensure check val is over threshold, to prevent noise
     if (curr_mag < PEAK_THRESHOLD_DB) continue;
-    // If not in the lowest band, a "peak" is loosely defined as an index
-    // whose magnitude is larger than it's two neighbors in each direction (left
-    // and right). Supposedly, this should be good enough in practice
-    if (i >= BAND_DIV_NBINS) {
-      if (curr_mag < mag_arr[i-2]) continue;
-      if (curr_mag < mag_arr[i-1]) continue;
-      // Only check next values if there are any (otherwise symmetry will make a peak towards the end)
-      if (i+1 <= num_samples / 2 && curr_mag < mag_arr[i+1]) continue;
-      if (i+2 <= num_samples / 2 && curr_mag < mag_arr[i+2]) continue;
+    // Based on the 'CHALLENGE' project (Bargun, Serafin, Erkut 2023), instead of just using midpoints, correlate
+    // adjacent bins only based on band. Lower frequency => less neighbors
+    // Current math is for every band interval, number of adjacent bins to sync goes increments
+    // by 1
+    int num_neighbors = i / BAND_DIV_NBINS;
+    // Peak is defined as a frequency whose magnitude is greater than all of its synchornized neighbors
+    bool is_peak = true;
+    // Iterate through neighbors
+    // Cap sync at boundaries of FFT
+    int lowest_neighbor  = MAX(0, i - num_neighbors);
+    int highest_neighbor = MIN(num_samples / 2, i + num_neighbors);
+    for (int j = lowest_neighbor; j < highest_neighbor; j++) {
+      if (j == i) continue; // Skip index itself
+      if (mag_arr[j] >= curr_mag) is_peak = false; // Greater value in range, not a peak
     }
+    // If not a peak, skip index
+    if (!is_peak) continue;
 
-    // If past these checks, value is local maxima
+    // If past these checks, value is considered a peak
     // Store in self-sorting tree
     if (num_peaks < MAX_PEAKS) {
       // If num peaks still less than max, return next in array and increment total count
@@ -130,11 +137,6 @@ int find_local_peaks(void)
     curr_peak->data.idx    = i;
 
     // Store bounds
-    // Based on the 'CHALLENGE' project (Bargun, Serafin, Erkut 2023), instead of just using midpoints, correlate
-    // adjacent bins only based on band. Lower frequency => less neighbors
-    // Current math is for every band interval, number of adjacent bins to sync goes increments
-    // by 1
-    int num_neighbors = i / BAND_DIV_NBINS;
     curr_peak->data.left_bound = i - num_neighbors;
     // For right bound, cap at Nyquist bin
     curr_peak->data.right_bound = MIN(i + num_neighbors, num_samples/2);
@@ -223,13 +225,6 @@ void shift_peaks_int(float shift_factor, float shift_gain, float* run_phase_comp
     int idx_shift = (int)roundf(delta_f_raw / peak_shift_cfg->bin_freq_step);
     int new_roi_start = curr_peak->data.left_bound + idx_shift;
     int new_roi_end   = curr_peak->data.right_bound + idx_shift;
-
-    // Cap at high frequency boundary unless peak actually surpasses value
-    // TODO: may be worth setting some threshold value...
-    int new_peak_idx  = curr_peak->data.idx + idx_shift;
-    if (new_roi_end   > num_samples/2 && new_peak_idx <= num_samples/2) {
-      new_roi_end = num_samples / 2;
-    }
 
     // Correct frequency change to be this integer increment
     // Should be uncorrected for sampling frequency
