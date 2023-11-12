@@ -129,8 +129,6 @@ void audio_data_modification(int* rxBuffer, int* txBuffer) {
     configASSERT( num_peaks >= 0 ); // If -1, reached max
     num_peaks_sum += num_peaks;
 
-    // Copy in tonic to start
-    memcpy(tx_iFFT, rx_FFT, FFT_MOD_SIZE * 2 * sizeof(float));
 
     if (num_peaks > 0) {
         // Perform peak shift, if there are any peaks
@@ -138,6 +136,8 @@ void audio_data_modification(int* rxBuffer, int* txBuffer) {
             shift_peaks_int(PITCH_SHIFT_FACTORS[i], PITCH_SHIFT_GAINS[i], run_phase_comp);
         }
     } else {
+        // Copy in original sound
+        memcpy(tx_iFFT, rx_FFT, FFT_MOD_SIZE * 2 * sizeof(float));
         // Otherwise reset phase compensation array
         reset_phase_comp_arr(run_phase_comp);
     }
