@@ -32,80 +32,10 @@
 #include <es8388.h>
 #include <algo_common.h>
 #include <peak_shift.h>
+#include <gpio_button.h>
 #include "esp_vocoder_main.h"
 
-// Stats trackers
-static unsigned int loop_count  = 0;
-static float dsp_calc_time_sum  = 0;
-static float num_peaks_sum      = 0;
-static unsigned int rx_ovfl_hit = 0;
-static unsigned int tx_ovfl_hit = 0;
-
 ////// HELPER FUNCTIONS //////
-void print_task_stats(void* pvParameters)
-{
-    const char* TAG = "Task Stats";
-    float* rx_FFT_mag_cpy = (float *)malloc(PLOT_LEN * sizeof(float));
-    float* tx_FFT_mag_cpy = (float *)malloc(PLOT_LEN * sizeof(float));
-
-    configASSERT( (rx_FFT_mag_cpy != NULL) && (tx_FFT_mag != NULL) );
-
-    while (1) {
-        vTaskDelay(3000 / portTICK_PERIOD_MS);
-
-        // Grab mutex
-        if (xSemaphoreTake(xDbgMutex, portMAX_DELAY) != pdTRUE) {
-            ESP_LOGE(TAG, "Failed to get debug buffer mutex for stats");
-            return;
-        }
-
-        // Calculate average time spent doing DSP calculations in ms
-        float dsp_calc_time_avg = dsp_calc_time_sum / loop_count;
-        // Calculate average number of peaks "detected" by algorithm
-        float num_peaks_avg = num_peaks_sum / loop_count;
-        
-        ESP_LOGI(TAG, "Running average DSP calc time: %.4f ms, avg num peaks: %.2f",
-            dsp_calc_time_avg, num_peaks_avg);
-        ESP_LOGI(TAG, "TX overflow hit count: %0d, RX overflow hit count: %0d", tx_ovfl_hit, rx_ovfl_hit);
-
-        // Clear sum and count
-        dsp_calc_time_sum = 0;
-        loop_count = 0;
-        num_peaks_sum = 0;
-
-        // Copy magnitude buffers
-        memcpy(rx_FFT_mag_cpy, rx_FFT_mag, PLOT_LEN * sizeof(float));
-        memcpy(tx_FFT_mag_cpy, tx_FFT_mag, PLOT_LEN * sizeof(float));
-
-        // Print local peaks
-        print_local_peaks();
-
-        // Release mutex
-        xSemaphoreGive(xDbgMutex);
-
-        // Plot magnitudes
-        ESP_LOGI(TAG, "Input FT magnitude (dB):");
-        dsps_view(rx_FFT_mag_cpy, PLOT_LEN, PLOT_LEN, 10, 0, 40, 'x');
-        ESP_LOGI(TAG, "Output FT magnitude (dB):");
-        dsps_view(tx_FFT_mag_cpy, PLOT_LEN, PLOT_LEN, 10, 0, 40, 'o');
-
-        // Get stack watermarks
-        UBaseType_t DSPStackWatermark, TxStackWatermark, RxStackWatermark, StatsStackWatermark;
-        DSPStackWatermark = uxTaskGetStackHighWaterMark(xDSPTaskHandle);
-        RxStackWatermark = uxTaskGetStackHighWaterMark(xRxTaskHandle);
-        TxStackWatermark = uxTaskGetStackHighWaterMark(xTxTaskHandle);
-        StatsStackWatermark = uxTaskGetStackHighWaterMark(NULL); // This task
-
-        ESP_LOGW(TAG, "Stack Watermarks:");
-        ESP_LOGI(TAG, "DSP Task:   %0d", DSPStackWatermark);
-        ESP_LOGI(TAG, "Rx Task:    %0d", RxStackWatermark);
-        ESP_LOGI(TAG, "Tx Task:    %0d", TxStackWatermark);
-        ESP_LOGI(TAG, "Stats Task: %0d", StatsStackWatermark);
-
-        size_t free_heap_size = xPortGetFreeHeapSize();
-        ESP_LOGW(TAG, "Free heap remaining: %d B", free_heap_size);
-    }
-}
 
 /**
  * @brief Function for performing audio data modification
@@ -184,28 +114,6 @@ void audio_data_modification(int* rxBuffer, int* txBuffer) {
 }
 
 ///// CALLBACKS ///// 
-
-/**
- * @brief Callback for TX send completion. Will send notification to I2S
- * transmit task to push data.
- * 
- * @param handle I2S channel handle (TX in this case)
- * @param event Event data
- * @param user_ctx User data
- * @return IRAM_ATTR False
- */
-static IRAM_ATTR bool tx_sent_callback(i2s_chan_handle_t handle, i2s_event_data_t *event, void *user_ctx)
-{
-    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-
-    // Set task notification for filler task to continue
-    configASSERT( xTxTaskHandle != NULL );
-    vTaskNotifyGiveFromISR(xTxTaskHandle, &xHigherPriorityTaskWoken);
-
-    portYIELD_FROM_ISR( xHigherPriorityTaskWoken );
-
-    return false; // FIXME what does this boolean indicate? Docs not clear
-}
 
 /**
  * @brief Callback for RX received event. Will send notification
@@ -387,6 +295,103 @@ void i2s_transmit(void* pvParameters)
     }
 }
 
+void print_task_stats(void* pvParameters)
+{
+    const char* TAG = "Task Stats";
+    float* rx_FFT_mag_cpy = (float *)malloc(PLOT_LEN * sizeof(float));
+    float* tx_FFT_mag_cpy = (float *)malloc(PLOT_LEN * sizeof(float));
+
+    configASSERT( (rx_FFT_mag_cpy != NULL) && (tx_FFT_mag != NULL) );
+
+    while (1) {
+        vTaskDelay(3000 / portTICK_PERIOD_MS);
+
+        // Grab mutex
+        if (xSemaphoreTake(xDbgMutex, portMAX_DELAY) != pdTRUE) {
+            ESP_LOGE(TAG, "Failed to get debug buffer mutex for stats");
+            return;
+        }
+
+        // Calculate average time spent doing DSP calculations in ms
+        float dsp_calc_time_avg = dsp_calc_time_sum / loop_count;
+        // Calculate average number of peaks "detected" by algorithm
+        float num_peaks_avg = num_peaks_sum / loop_count;
+        
+        ESP_LOGI(TAG, "Running average DSP calc time: %.4f ms, avg num peaks: %.2f",
+            dsp_calc_time_avg, num_peaks_avg);
+        ESP_LOGI(TAG, "TX ovfl hit: %0d, RX ovfl hit: %0d, sleep count: %0d",
+                 tx_ovfl_hit, rx_ovfl_hit, sleep_isr_count);
+
+        // Clear sum and count
+        dsp_calc_time_sum = 0;
+        loop_count = 0;
+        num_peaks_sum = 0;
+
+        // Copy magnitude buffers
+        memcpy(rx_FFT_mag_cpy, rx_FFT_mag, PLOT_LEN * sizeof(float));
+        memcpy(tx_FFT_mag_cpy, tx_FFT_mag, PLOT_LEN * sizeof(float));
+
+        // Print local peaks
+        print_local_peaks();
+
+        // Release mutex
+        xSemaphoreGive(xDbgMutex);
+
+        // Plot magnitudes
+        ESP_LOGI(TAG, "Input FT magnitude (dB):");
+        dsps_view(rx_FFT_mag_cpy, PLOT_LEN, PLOT_LEN, 10, 0, 40, 'x');
+        ESP_LOGI(TAG, "Output FT magnitude (dB):");
+        dsps_view(tx_FFT_mag_cpy, PLOT_LEN, PLOT_LEN, 10, 0, 40, 'o');
+
+        // Get stack watermarks
+        UBaseType_t DSPStackWatermark, TxStackWatermark, RxStackWatermark, StatsStackWatermark;
+        DSPStackWatermark = uxTaskGetStackHighWaterMark(xDSPTaskHandle);
+        RxStackWatermark = uxTaskGetStackHighWaterMark(xRxTaskHandle);
+        TxStackWatermark = uxTaskGetStackHighWaterMark(xTxTaskHandle);
+        StatsStackWatermark = uxTaskGetStackHighWaterMark(NULL); // This task
+
+        ESP_LOGW(TAG, "Stack Watermarks:");
+        ESP_LOGI(TAG, "DSP Task:   %0d", DSPStackWatermark);
+        ESP_LOGI(TAG, "Rx Task:    %0d", RxStackWatermark);
+        ESP_LOGI(TAG, "Tx Task:    %0d", TxStackWatermark);
+        ESP_LOGI(TAG, "Stats Task: %0d", StatsStackWatermark);
+
+        size_t free_heap_size = xPortGetFreeHeapSize();
+        ESP_LOGW(TAG, "Free heap remaining: %d B", free_heap_size);
+    }
+}
+
+void enter_sleep(void* pvParameters)
+{
+    int gpio_level;
+
+    // Initialize GPIO interrupt on sleep/wake button
+    init_gpio_button(GPIO_SLEEP_WAKE, xSleepTaskHandle);
+
+    while (1)
+    {
+        // Enable ISR
+        gpio_intr_enable(GPIO_SLEEP_WAKE);
+
+        // Wait for task notification from ISR
+        (void) ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
+        // Disable ISR
+        gpio_intr_disable(GPIO_SLEEP_WAKE);
+
+        // Perform debounce check on ISR
+        if (!gpio_debounce_check(GPIO_SLEEP_WAKE, &gpio_level)) {
+            // Debounce check failed, just a spurious interrupt
+            // Move on and disregard level
+            continue;
+        }
+        sleep_isr_count++;
+
+        // For now, do nothing. Just a test
+    }
+
+}
+
 ///// MAIN LOOP ///// 
 
 void app_main(void)
@@ -446,7 +451,7 @@ void app_main(void)
     i2s_event_callbacks_t cbs = {
         .on_recv = rx_rcvd_callback,
         .on_recv_q_ovf = rx_rcvd_overflow,
-        .on_sent = tx_sent_callback,
+        .on_sent = NULL, // Not necessary
         .on_send_q_ovf = tx_sent_overflow,
     };
     ESP_ERROR_CHECK(i2s_channel_register_event_callback(rx_handle, &cbs, NULL));
@@ -497,6 +502,18 @@ void app_main(void)
         TASK_STATS_CORE
     );
 
+    ESP_LOGW(TAG, "Starting sleep/wake GPIO task...");
+    xReturned |= xTaskCreatePinnedToCore(
+        enter_sleep, 
+        "Sleep Task",
+        SLEEP_TASK_STACK_SIZE,
+        NULL,
+        SLEEP_TASK_PRIORITY,
+        &xSleepTaskHandle,
+        SLEEP_TASK_CORE
+    );
+
+    // Verify all tasks started properly
     if ( xReturned != pdPASS )
     {
         ESP_LOGE(TAG, "Failed to create tasks! Error: %d. Restarting ESP in 5 seconds...", xReturned);

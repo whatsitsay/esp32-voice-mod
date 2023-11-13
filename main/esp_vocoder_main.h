@@ -26,6 +26,7 @@
 #include "freertos/semphr.h"
 #include "freertos/event_groups.h"
 #include "driver/i2s_std.h"
+#include "driver/gpio.h"
 
 // Local libraries
 #include <es8388.h>
@@ -68,7 +69,11 @@ float rxBuffer_overlap[HOP_SIZE];
 i2s_chan_handle_t rx_handle, tx_handle;
 
 // Task handles
-TaskHandle_t xDSPTaskHandle, xRxTaskHandle, xTxTaskHandle, xTaskStatsHandle;
+TaskHandle_t xDSPTaskHandle;
+TaskHandle_t  xRxTaskHandle;
+TaskHandle_t  xTxTaskHandle;
+TaskHandle_t  xTaskStatsHandle;
+TaskHandle_t  xSleepTaskHandle;
 // Stack sizes based empirically on high watermarks, with a little extra room just in case
 // Should be revisited if changes are made
 #define DSP_TASK_STACK_SIZE (15500u) // Watermark: 15284
@@ -79,11 +84,14 @@ TaskHandle_t xDSPTaskHandle, xRxTaskHandle, xTxTaskHandle, xTaskStatsHandle;
 #define TX_TASK_CORE (1)
 #define TASK_STATS_STACK_SIZE (3000u) // Watermark: 1164, but crashes on anything lower
 #define TASK_STATS_CORE (0)
+#define SLEEP_TASK_CORE (0)
+#define SLEEP_TASK_STACK_SIZE (1024u) // Check watermark!
 
 #define DSP_TASK_PRIORITY (1U) // Just above idle
 #define TX_TASK_PRIORITY (10U) // Higher due to it being blocked
 #define RX_TASK_PRIORITY (10U) // Higher still since it will spend the most time blocked
 #define TASK_STATS_PRIORITY (0U) // == IDLE PRIO
+#define SLEEP_TASK_PRIORITY (15U) // Higher, but should be quick
 
 // Event group
 EventGroupHandle_t xTaskSyncBits;
@@ -116,5 +124,16 @@ const float PITCH_SHIFT_GAINS[] = {
   1.0, // Lower sixth flat
   0.8, // Minor third
 };
+
+// GPIO config
+#define GPIO_SLEEP_WAKE (GPIO_NUM_36)
+
+// Stats trackers
+static unsigned loop_count      = 0;
+static float dsp_calc_time_sum  = 0;
+static float num_peaks_sum      = 0;
+static unsigned rx_ovfl_hit     = 0;
+static unsigned tx_ovfl_hit     = 0;
+static unsigned sleep_isr_count = 0;
 
 #endif // __ESP_VOCODER_MAIN__
