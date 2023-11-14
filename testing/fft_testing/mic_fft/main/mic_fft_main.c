@@ -47,7 +47,7 @@ static unsigned int full_data_rcvd = 0;
 // FFT buffers
 __attribute__((aligned(16))) float rx_FFT[RX_BUFFER_LEN * 2]; // Will be complex
 
-#define FFT_MOD_SIZE (N_SAMPLES/2 + 1) // +1 for midpoint N/2
+
 __attribute__((aligned(16))) float prev_rx_FFT[2 * FFT_MOD_SIZE]; // Needed for instantaneous angle calc
 __attribute__((aligned(16))) float rx_FFT_mag[FFT_MOD_SIZE]; // Needed for peak shifting
 __attribute__((aligned(16))) float run_phase_comp[2 * FFT_MOD_SIZE]; // Cumulative phase compensation buffer

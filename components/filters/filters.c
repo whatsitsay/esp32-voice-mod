@@ -53,3 +53,57 @@ void comb_filter(float comb_gain, int comb_angle_idx, float in_real, float in_im
   // Multiply by input, store in output
   mult_complex(comb_real, comb_imag, in_real, in_imag, out_real, out_imag);
 }
+
+void init_schroeder_reverb_coeffs(float* reverb_coeffs, int sampling_freq)
+{
+    // Calculate all gains and store in temporary luts
+    float comb_gain[] = {
+        FILTER_GAIN(COMB1_TAU_MS, COMB_RVT_MS),
+        FILTER_GAIN(COMB2_TAU_MS, COMB_RVT_MS),
+        FILTER_GAIN(COMB3_TAU_MS, COMB_RVT_MS),
+        FILTER_GAIN(COMB4_TAU_MS, COMB_RVT_MS)
+    };
+    float ap_gain[] = {
+        FILTER_GAIN(AP1_TAU_MS, AP1_RVT_MS),
+        FILTER_GAIN(AP2_TAU_MS, AP2_RVT_MS)
+    };
+
+    // Calculate all delay indicies, which will be delay (loop) time x sampling frequency
+    int comb_delay_idx[] = {
+        roundf(COMB1_TAU_MS * sampling_freq / 1000),
+        roundf(COMB2_TAU_MS * sampling_freq / 1000),
+        roundf(COMB3_TAU_MS * sampling_freq / 1000),
+        roundf(COMB4_TAU_MS * sampling_freq / 1000)
+    };
+    int ap_delay_idx[] = {
+        roundf(AP1_TAU_MS * sampling_freq / 1000),
+        roundf(AP2_TAU_MS * sampling_freq / 1000)
+    };
+
+    // Loop over coefficient LUT
+    for (int k = 0; k < FFT_MOD_SIZE; k++)
+    {
+        // Start with impulse 1 + 0j
+        float ap_real = 1; 
+        float ap_imag = 0;
+        // Cascade multiply allpass coefficients
+        for (int i = 0; i < NUM_AP_FILTERS; i++) {
+            allpass_filter(ap_gain[i], ap_delay_idx[i] * k, ap_real, ap_imag, &ap_real, &ap_imag);
+        }
+
+        // Calculate comb filters in parallel, so each gets an impulse response as input
+        float comb_real = 0;
+        float comb_imag = 0;
+        for (int i = 0; i < NUM_COMB_FILTERS; i++) {
+            float curr_comb_real, curr_comb_imag;
+            comb_filter(comb_gain[i], comb_delay_idx[i] * k, 1, 0, &curr_comb_real, &curr_comb_imag);
+            // Comb filters are summed, so add to running sum here
+            // Also correct for number of filters when adding
+            comb_real += curr_comb_real / NUM_COMB_FILTERS;
+            comb_imag += curr_comb_imag / NUM_COMB_FILTERS;
+        }
+
+        // Reverb coefficients will be product of AP and comb filters
+        mult_complex(ap_real, ap_imag, comb_real, comb_imag, &reverb_coeffs[2*k], &reverb_coeffs[2*k + 1]);
+    }
+}

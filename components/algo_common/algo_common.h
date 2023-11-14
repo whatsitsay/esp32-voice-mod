@@ -16,6 +16,7 @@
 #define FFT_DB_BASE (1e4) // Base value for comparison when calculating dB values of magnitude
 
 #define N_SAMPLES (4096) // Number of samples for FFT operations
+#define FFT_MOD_SIZE ((N_SAMPLES / 2) + 1) // Number of samples needed to properly modify real-signal FFTs
 
 /**
  * @brief Calculate FFT from signal data

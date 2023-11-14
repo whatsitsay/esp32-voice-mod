@@ -37,20 +37,6 @@ int N = N_SAMPLES;
 __attribute__((aligned(16))) float rx_FFT[N_SAMPLES * 2]; // Will be complex
 __attribute__((aligned(16))) float tx_iFFT[N_SAMPLES * 2];
 
-// Comb filter parameters
-#define NUM_COMB_FILTERS            (4)
-#define NUM_AP_FILTERS              (2)
-#define COMB_RVT_MS                 (1000.0) // "Reverb time desired", time it takes delayed signal to reach -60 dB
-#define AP1_RVT_MS                  (96.83)
-#define AP2_RVT_MS                  (32.92)
-#define COMB1_TAU_MS                (29.7) // Loop time of comb filter 1
-#define COMB2_TAU_MS                (37.1) // Loop time of comb filter 2
-#define COMB3_TAU_MS                (41.1) // Loop time of comb filter 2
-#define COMB4_TAU_MS                (43.7) // Loop time of comb filter 2
-#define AP1_TAU_MS                  (5.0)  // Loop time of allpass filter 1
-#define AP2_TAU_MS                  (1.7)  // Loop time of allpass filter 2
-#define FILTER_GAIN(tau_ms, rvt_ms) (powf(0.001, tau_ms / rvt_ms)) // Gain based on loop time
-#define FFT_MOD_SIZE                ((N_SAMPLES / 2) + 1)
 
 // Array of impulse frequency response coefficients
 __attribute__((aligned(16))) float reverb_coeffs[2 * FFT_MOD_SIZE];
@@ -151,61 +137,6 @@ void print_task_stats(void* pvParameters)
         dsps_view(rx_FFT_mag_cpy, PLOT_LEN, PLOT_LEN, 10, 0, 40, 'x');
         ESP_LOGI(TAG, "Output FT magnitude (dB):");
         dsps_view(tx_FFT_mag_cpy, PLOT_LEN, PLOT_LEN, 10, 0, 40, 'o');
-    }
-}
-
-void init_reverb_coeffs()
-{
-    // Calculate all gains and store in temporary luts
-    float comb_gain[] = {
-        FILTER_GAIN(COMB1_TAU_MS, COMB_RVT_MS),
-        FILTER_GAIN(COMB2_TAU_MS, COMB_RVT_MS),
-        FILTER_GAIN(COMB3_TAU_MS, COMB_RVT_MS),
-        FILTER_GAIN(COMB4_TAU_MS, COMB_RVT_MS)
-    };
-    float ap_gain[] = {
-        FILTER_GAIN(AP1_TAU_MS, AP1_RVT_MS),
-        FILTER_GAIN(AP2_TAU_MS, AP2_RVT_MS)
-    };
-
-
-    // Calculate all delay indicies, which will be delay (loop) time x sampling frequency
-    int comb_delay_idx[] = {
-        roundf(COMB1_TAU_MS * I2S_SAMPLING_FREQ_HZ / 1000),
-        roundf(COMB2_TAU_MS * I2S_SAMPLING_FREQ_HZ / 1000),
-        roundf(COMB3_TAU_MS * I2S_SAMPLING_FREQ_HZ / 1000),
-        roundf(COMB4_TAU_MS * I2S_SAMPLING_FREQ_HZ / 1000)
-    };
-    int ap_delay_idx[] = {
-        roundf(AP1_TAU_MS * I2S_SAMPLING_FREQ_HZ / 1000),
-        roundf(AP2_TAU_MS * I2S_SAMPLING_FREQ_HZ / 1000)
-    };
-
-    // Loop over coefficient LUT
-    for (int k = 0; k < FFT_MOD_SIZE; k++)
-    {
-        // Start with impulse 1 + 0j
-        float ap_real = 1; 
-        float ap_imag = 0;
-        // Cascade multiply allpass coefficients
-        for (int i = 0; i < NUM_AP_FILTERS; i++) {
-            allpass_filter(ap_gain[i], ap_delay_idx[i] * k, ap_real, ap_imag, &ap_real, &ap_imag);
-        }
-
-        // Calculate comb filters in parallel, so each gets an impulse response as input
-        float comb_real = 0;
-        float comb_imag = 0;
-        for (int i = 0; i < NUM_COMB_FILTERS; i++) {
-            float curr_comb_real, curr_comb_imag;
-            comb_filter(comb_gain[i], comb_delay_idx[i] * k, 1, 0, &curr_comb_real, &curr_comb_imag);
-            // Comb filters are summed, so add to running sum here
-            // Also correct for number of filters when adding
-            comb_real += curr_comb_real / NUM_COMB_FILTERS;
-            comb_imag += curr_comb_imag / NUM_COMB_FILTERS;
-        }
-
-        // Reverb coefficients will be product of AP and comb filters
-        mult_complex(ap_real, ap_imag, comb_real, comb_imag, &reverb_coeffs[2*k], &reverb_coeffs[2*k + 1]);
     }
 }
 
@@ -498,7 +429,7 @@ void app_main(void)
     
 
     // Initialize reverb coefficients
-    init_reverb_coeffs();
+    init_schroeder_reverb_coeffs(reverb_coeffs, I2S_SAMPLING_FREQ_HZ);
 
     // Intantiate indices
     i2s_idx = I2S_IDX_START;

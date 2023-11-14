@@ -32,6 +32,7 @@
 #include <es8388.h>
 #include <algo_common.h>
 #include <peak_shift.h>
+#include <filters.h>
 #include "esp_vocoder_main.h"
 
 // Stats trackers
@@ -142,6 +143,16 @@ void audio_data_modification(int* rxBuffer, int* txBuffer) {
         reset_phase_comp_arr(run_phase_comp);
     }
 
+    // Perform convolution with Schroeder reverb IR
+    // Effect feels minimal, but convolution *technically* isn't being done correctly
+    // Supposedly, windowing at the end will eliminate end effects
+    for (int i = 0; i < 2 *FFT_MOD_SIZE; i += 2)
+    {
+        mult_complex(tx_iFFT[i], tx_iFFT[i+1],
+                     reverb_coeffs[i], reverb_coeffs[i+1],
+                     &tx_iFFT[i], &tx_iFFT[i + 1]);
+    }
+
     // Calculate magnitudes
     calc_fft_mag_db(tx_iFFT, tx_FFT_mag, PLOT_LEN);
 
@@ -247,9 +258,13 @@ static IRAM_ATTR bool tx_sent_overflow(i2s_chan_handle_t handle, i2s_event_data_
 
 void proc_audio_data(void* pvParameters)
 {
+    // Initialize Schroeder reverb coefficients
+    init_schroeder_reverb_coeffs(reverb_coeffs, I2S_SAMPLING_FREQ_HZ);
+
     // Wait for initial notification from RX task, so first audio data is half-valid
     // This should limit delay to just the first swap, i.e. 50 ms
     (void) ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
     // Main loop
     while (1) {
         // Clear event bit

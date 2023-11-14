@@ -44,7 +44,7 @@ __attribute__((aligned(16))) float tx_iFFT[N_SAMPLES * 2];
 #define LFO_FREQ_HZ      (5.0)
 #define WET_GAIN         (0.5)
 #define DRY_GAIN         (1 - WET_GAIN)
-#define FFT_MOD_SIZE     ((N_SAMPLES / 2) + 1) // To save memory. Includes midpoint Nyquist
+
 
 // Stats trackers
 static unsigned int loop_count  = 0;
