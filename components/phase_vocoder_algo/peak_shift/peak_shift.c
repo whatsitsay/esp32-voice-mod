@@ -133,27 +133,9 @@ int find_local_peaks(void)
     configASSERT( curr_peak  != NULL );
 
     // Store magnitude and index in peak data
+    // Other values will be stored in second loop
     curr_peak->data.mag_db = curr_mag;
     curr_peak->data.idx    = i;
-
-    // Store bounds
-    curr_peak->data.left_bound = i - num_neighbors;
-    // For right bound, cap at Nyquist bin
-    curr_peak->data.right_bound = MIN(i + num_neighbors, num_samples/2);
-
-    // Store phase
-    curr_peak->data.phase = get_idx_phase(peak_shift_cfg->fft_ptr, i);
-
-    // Better estimate actual frequency of peak using phase difference
-    // with previous frame (back calculation only, as this is real-time)
-    float phase_diff = curr_peak->data.phase - get_idx_phase(peak_shift_cfg->fft_prev_ptr, i);
-    // Bound between pi and -pi
-    phase_diff = MIN(M_PI, phase_diff);
-    phase_diff = MAX(-M_PI, phase_diff);
-    // Correction is defined as the ratio of this phase diff over 2pi, times the bin frequency step
-    float freq_diff = (phase_diff * peak_shift_cfg->bin_freq_step) / (2 * M_PI);
-    // Correct for instantaneous frequency estimate
-    curr_peak->data.inst_freq = (i * peak_shift_cfg->bin_freq_step) + freq_diff;
 
     // Insert into tree
     // This allows for the minimum to always be automatically available
@@ -169,6 +151,31 @@ int find_local_peaks(void)
       min_peak = SPLAY_MIN(peak_tree, &_head);
       configASSERT( min_peak != NULL );
     }
+  }
+
+  // Iterate through all peaks and populate other data values
+  // Limits longer calculations, like phase, to just actual chosen peaks
+  SPLAY_FOREACH(curr_peak, peak_tree, &_head)
+  {
+    // Store bounds
+    int num_neighbors = curr_peak->data.idx / BAND_DIV_NBINS;
+    curr_peak->data.left_bound = curr_peak->data.idx - num_neighbors;
+    // For right bound, cap at Nyquist bin
+    curr_peak->data.right_bound = MIN(curr_peak->data.idx + num_neighbors, num_samples/2);
+
+    // Store phase
+    curr_peak->data.phase = get_idx_phase(peak_shift_cfg->fft_ptr, curr_peak->data.idx);
+
+    // Better estimate actual frequency of peak using phase difference
+    // with previous frame (back calculation only, as this is real-time)
+    float phase_diff = curr_peak->data.phase - get_idx_phase(peak_shift_cfg->fft_prev_ptr, curr_peak->data.idx);
+    // Bound between pi and -pi
+    phase_diff = MIN(M_PI, phase_diff);
+    phase_diff = MAX(-M_PI, phase_diff);
+    // Correction is defined as the ratio of this phase diff over 2pi, times the bin frequency step
+    float freq_diff = (phase_diff * peak_shift_cfg->bin_freq_step) / (2 * M_PI);
+    // Correct for instantaneous frequency estimate
+    curr_peak->data.inst_freq = (curr_peak->data.idx * peak_shift_cfg->bin_freq_step) + freq_diff;
   }
 
   // Return number of peaks

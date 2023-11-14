@@ -247,6 +247,9 @@ static IRAM_ATTR bool tx_sent_overflow(i2s_chan_handle_t handle, i2s_event_data_
 
 void proc_audio_data(void* pvParameters)
 {
+    // Wait for initial notification from RX task, so first audio data is half-valid
+    // This should limit delay to just the first swap, i.e. 50 ms
+    (void) ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     // Main loop
     while (1) {
         // Clear event bit
@@ -287,13 +290,25 @@ void i2s_receive(void* pvParameters)
 {
     static const char *TAG = "I2S receive";
 
+    size_t data_received = 0;
+
     configASSERT( rx_handle != NULL );
 
     // Enable RX channel
     ESP_ERROR_CHECK(i2s_channel_enable(rx_handle));
 
+    // Perform first read with dsp buffer, so that it has real data to use
+    // for the first frame
+    i2s_channel_read(rx_handle, rxBuffers[dsp_idx], HOP_BUFFER_SIZE_B, &data_received, 300 / portTICK_PERIOD_MS);
+    if (data_received != HOP_BUFFER_SIZE_B) {
+        ESP_LOGE(TAG, "Only read %d out of %d bytes from I2S buffer", data_received, HOP_BUFFER_SIZE_B);
+    }
+
+    // Notify TX and DSP task to continue on
+    xTaskNotifyGive(xTxTaskHandle);
+    xTaskNotifyGive(xDSPTaskHandle);
+
     while (1) {
-        size_t data_received = 0;
         
         // Clear event bit
         (void) xEventGroupClearBits(xTaskSyncBits, RX_TASK_BIT);
@@ -327,6 +342,10 @@ void i2s_transmit(void* pvParameters)
     
     // Enable TX channel
     ESP_ERROR_CHECK(i2s_channel_enable(tx_handle));
+
+    // Wait for initial notification from RX task, so first audio data is half-valid
+    // This should limit delay to just the first swap, i.e. 50 ms
+    (void) ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
     while (1) {
         size_t data_written = 0;
@@ -465,7 +484,6 @@ void app_main(void)
     if ( xReturned != pdPASS )
     {
         ESP_LOGE(TAG, "Failed to create tasks! Error: %d. Restarting ESP in 5 seconds...", xReturned);
-        vTaskDelete(xDSPTaskHandle);
         vTaskDelay(5000 / portTICK_PERIOD_MS);
         esp_restart();
     }
