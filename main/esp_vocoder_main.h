@@ -69,13 +69,15 @@ i2s_chan_handle_t rx_handle, tx_handle;
 
 // Task handles
 TaskHandle_t xDSPTaskHandle, xRxTaskHandle, xTxTaskHandle, xTaskStatsHandle;
-#define DSP_TASK_STACK_SIZE (16384u) // Check watermark!
+// Stack sizes based empirically on high watermarks, with a little extra room just in case
+// Should be revisited if changes are made
+#define DSP_TASK_STACK_SIZE (15500u) // Watermark: 15284
 #define DSP_TASK_CORE (0)
-#define RX_TASK_STACK_SIZE (4096u) // Check watermark!
+#define RX_TASK_STACK_SIZE (3600u) // Watermark: 3464
 #define RX_TASK_CORE (1)
-#define TX_TASK_STACK_SIZE (4096u) // Check watermark!
+#define TX_TASK_STACK_SIZE (3600u) // Watermark: 3456
 #define TX_TASK_CORE (1)
-#define TASK_STATS_STACK_SIZE (4096u) // Check watermark!
+#define TASK_STATS_STACK_SIZE (3000u) // Watermark: 1164, but crashes on anything lower
 #define TASK_STATS_CORE (0)
 
 #define DSP_TASK_PRIORITY (1U) // Just above idle

@@ -88,6 +88,22 @@ void print_task_stats(void* pvParameters)
         dsps_view(rx_FFT_mag_cpy, PLOT_LEN, PLOT_LEN, 10, 0, 40, 'x');
         ESP_LOGI(TAG, "Output FT magnitude (dB):");
         dsps_view(tx_FFT_mag_cpy, PLOT_LEN, PLOT_LEN, 10, 0, 40, 'o');
+
+        // Get stack watermarks
+        UBaseType_t DSPStackWatermark, TxStackWatermark, RxStackWatermark, StatsStackWatermark;
+        DSPStackWatermark = uxTaskGetStackHighWaterMark(xDSPTaskHandle);
+        RxStackWatermark = uxTaskGetStackHighWaterMark(xRxTaskHandle);
+        TxStackWatermark = uxTaskGetStackHighWaterMark(xTxTaskHandle);
+        StatsStackWatermark = uxTaskGetStackHighWaterMark(NULL); // This task
+
+        ESP_LOGW(TAG, "Stack Watermarks:");
+        ESP_LOGI(TAG, "DSP Task:   %0d", DSPStackWatermark);
+        ESP_LOGI(TAG, "Rx Task:    %0d", RxStackWatermark);
+        ESP_LOGI(TAG, "Tx Task:    %0d", TxStackWatermark);
+        ESP_LOGI(TAG, "Stats Task: %0d", StatsStackWatermark);
+
+        size_t free_heap_size = xPortGetFreeHeapSize();
+        ESP_LOGW(TAG, "Free heap remaining: %d B", free_heap_size);
     }
 }
 
