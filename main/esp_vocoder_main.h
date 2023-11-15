@@ -73,7 +73,7 @@ TaskHandle_t xDSPTaskHandle;
 TaskHandle_t  xRxTaskHandle;
 TaskHandle_t  xTxTaskHandle;
 TaskHandle_t  xTaskStatsHandle;
-TaskHandle_t  xSleepTaskHandle;
+TaskHandle_t  xModeSwitchTaskHandle;
 // Stack sizes based empirically on high watermarks, with a little extra room just in case
 // Should be revisited if changes are made
 #define DSP_TASK_STACK_SIZE (15500u) // Watermark: 15284
@@ -84,14 +84,14 @@ TaskHandle_t  xSleepTaskHandle;
 #define TX_TASK_CORE (1)
 #define TASK_STATS_STACK_SIZE (3000u) // Watermark: 1164, but crashes on anything lower
 #define TASK_STATS_CORE (0)
-#define SLEEP_TASK_CORE (0)
-#define SLEEP_TASK_STACK_SIZE (1024u) // Check watermark!
+#define MODE_SWITCH_TASK_CORE (1)
+#define MODE_SWITCH_TASK_STACK_SIZE (1024u) // Check watermark!
 
 #define DSP_TASK_PRIORITY (1U) // Just above idle
 #define TX_TASK_PRIORITY (10U) // Higher due to it being blocked
 #define RX_TASK_PRIORITY (10U) // Higher still since it will spend the most time blocked
 #define TASK_STATS_PRIORITY (0U) // == IDLE PRIO
-#define SLEEP_TASK_PRIORITY (15U) // Higher, but should be quick
+#define MODE_SWITCH_TASK_PRIORITY (5U) // A little higher, but should be quick
 
 // Event group
 EventGroupHandle_t xTaskSyncBits;
@@ -104,7 +104,7 @@ EventGroupHandle_t xTaskSyncBits;
 #define SYNC_TIMEOUT_TICKS  (500 / portTICK_PERIOD_MS) // Raise error if not synced by this point
 
 // Semaphores
-SemaphoreHandle_t xDbgMutex;
+SemaphoreHandle_t xDbgMutex, xModeSwitchMutex;
 
 #define PLOT_LEN (128)
 __attribute__((aligned(16))) float tx_FFT_mag[PLOT_LEN]; // For debug only
@@ -112,21 +112,40 @@ __attribute__((aligned(16))) float tx_FFT_mag[PLOT_LEN]; // For debug only
 // Lookup table for pitch shift factors
 #define NUM_PITCH_SHIFTS (4)
 // Pitch-shift for minor 7th where original sound is 5th
-const float PITCH_SHIFT_FACTORS[] = {
+static const float PITCH_SHIFT_FACTORS[] = {
   1.0, // Original sound
   0.66667, // Lower Fourth ("Tonic")
   0.8, // Lower 6th flat (Minor third of new tonic, 2/3 * 6/5 = 4/5)
   1.2, // Minor Third (Flat seventh of new tonic)
 };
-const float PITCH_SHIFT_GAINS[] = {
+static const float PITCH_SHIFT_GAINS[] = {
   1.0, // Original sound
   1.1, // Lower fourth
   1.0, // Lower sixth flat
   0.8, // Minor third
 };
 
-// GPIO config
-#define GPIO_SLEEP_WAKE (GPIO_NUM_36)
+#define LOW_EFFECT_SHIFT  (0.75)
+#define LOW_EFFECT_GAIN   (1.1)
+#define HIGH_EFFECT_SHIFT (1.5)
+#define HIGH_EFFECT_GAIN  (1.0)
+#define PASSTHROUGH_SHIFT (1.0)
+#define PASSTHROUGH_GAIN  (1.0)
+
+
+typedef enum {
+  MOD_CHORUS,
+  MOD_LOW,
+  MOD_HIGH,
+  PASSTHROUGH,
+  MAX_VOCODER_MODE
+} vocoder_mode_e;
+
+// Mode switch config
+#define GPIO_LED_1       (GPIO_NUM_22)
+#define GPIO_LED_2       (GPIO_NUM_19)
+#define GPIO_MODE_SWITCH (GPIO_NUM_36)
+static vocoder_mode_e vocoder_mode = MOD_CHORUS;
 
 // Stats trackers
 static unsigned loop_count      = 0;
@@ -134,6 +153,6 @@ static float dsp_calc_time_sum  = 0;
 static float num_peaks_sum      = 0;
 static unsigned rx_ovfl_hit     = 0;
 static unsigned tx_ovfl_hit     = 0;
-static unsigned sleep_isr_count = 0;
+static unsigned mode_switch_isr_count = 0;
 
 #endif // __ESP_VOCODER_MAIN__

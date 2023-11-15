@@ -45,6 +45,7 @@
  */
 void audio_data_modification(int* rxBuffer, int* txBuffer) {
     static const char* TAG = "Audio Modification";
+    static vocoder_mode_e prev_vocoder_mode = MOD_CHORUS;
 
     // Copy RX overlap into debug buffer
     if (xSemaphoreTake(xDbgMutex, 500 / portTICK_PERIOD_MS) != pdTRUE) {
@@ -78,13 +79,47 @@ void audio_data_modification(int* rxBuffer, int* txBuffer) {
 
     if (num_peaks > 0) {
         // Perform peak shift, if there are any peaks
-        for (int i = 0; i < NUM_PITCH_SHIFTS; i++) {
-            shift_peaks_int(PITCH_SHIFT_FACTORS[i], PITCH_SHIFT_GAINS[i], run_phase_comp);
+        // First get mode mutex
+        xSemaphoreTake(xModeSwitchMutex, 10 / portTICK_PERIOD_MS); // Wait very little time to prevent latency
+        // Reset phase compensation array on mode switch
+        if (prev_vocoder_mode != vocoder_mode) {
+            // Reset phase before continuing
+            reset_phase_comp_arr(run_phase_comp);
         }
+        switch (vocoder_mode) {
+            case MOD_CHORUS: {
+                // Perform full chorus shift
+                for (int i = 0; i < NUM_PITCH_SHIFTS; i++) {
+                    shift_peaks_int(PITCH_SHIFT_FACTORS[i], PITCH_SHIFT_GAINS[i], run_phase_comp);
+                }
+                break;
+            }
+            case MOD_LOW: {
+                shift_peaks_int(LOW_EFFECT_SHIFT, LOW_EFFECT_GAIN, run_phase_comp);
+                break;
+            }
+            case MOD_HIGH: {
+                shift_peaks_int(HIGH_EFFECT_SHIFT, HIGH_EFFECT_GAIN, run_phase_comp);
+                break;
+            }
+            case PASSTHROUGH: {
+                // NOTE: this could just be another copy situation
+                shift_peaks_int(PASSTHROUGH_SHIFT, PASSTHROUGH_GAIN, run_phase_comp);
+                break;
+            }
+            default: {
+                // Copy in original sound, reset running phase comp
+                memcpy(tx_iFFT, rx_FFT, FFT_MOD_SIZE * 2 * sizeof(float));
+                reset_phase_comp_arr(run_phase_comp);
+            }
+        }
+        // Save previous mode
+        prev_vocoder_mode = vocoder_mode;
+        // Give mutex
+        xSemaphoreGive(xModeSwitchMutex);
     } else {
-        // Copy in original sound
+        // Copy in original sound, reset running phase comp
         memcpy(tx_iFFT, rx_FFT, FFT_MOD_SIZE * 2 * sizeof(float));
-        // Otherwise reset phase compensation array
         reset_phase_comp_arr(run_phase_comp);
     }
 
@@ -111,6 +146,14 @@ void audio_data_modification(int* rxBuffer, int* txBuffer) {
         txBuffer_overlap[i] = tx_overlap_val;
     }
     xSemaphoreGive(xDbgMutex);
+}
+
+void set_mode_leds()
+{
+    int mode_int = (int)vocoder_mode;
+    // Set to the opposite mode of each bit, as they need to be pulled down
+    gpio_set_level(GPIO_LED_1, (~mode_int) & 0x1);
+    gpio_set_level(GPIO_LED_2, ~(mode_int >> 1) & 0x1);
 }
 
 ///// CALLBACKS ///// 
@@ -319,8 +362,8 @@ void print_task_stats(void* pvParameters)
         
         ESP_LOGI(TAG, "Running average DSP calc time: %.4f ms, avg num peaks: %.2f",
             dsp_calc_time_avg, num_peaks_avg);
-        ESP_LOGI(TAG, "TX ovfl hit: %0d, RX ovfl hit: %0d, sleep count: %0d",
-                 tx_ovfl_hit, rx_ovfl_hit, sleep_isr_count);
+        ESP_LOGI(TAG, "TX ovfl hit: %0d, RX ovfl hit: %0d, mode switch count: %0d, current mode: %0d",
+                 tx_ovfl_hit, rx_ovfl_hit, mode_switch_isr_count, vocoder_mode);
 
         // Clear sum and count
         dsp_calc_time_sum = 0;
@@ -361,33 +404,58 @@ void print_task_stats(void* pvParameters)
     }
 }
 
-void enter_sleep(void* pvParameters)
+void mon_mode_switch(void* pvParameters)
 {
     int gpio_level;
 
-    // Initialize GPIO interrupt on sleep/wake button
-    init_gpio_button(GPIO_SLEEP_WAKE, xSleepTaskHandle);
+    // Initialize GPIO interrupt on mode switch button
+    init_gpio_button(GPIO_MODE_SWITCH, xModeSwitchTaskHandle);
+#ifndef INMP441_MIC
+    // Initialize LED output for mode switch
+    gpio_set_direction(GPIO_LED_1, GPIO_MODE_OUTPUT);
+    gpio_set_direction(GPIO_LED_2, GPIO_MODE_OUTPUT);
+    // Set LEDs to initial mode
+    set_mode_leds();
+#endif
 
     while (1)
     {
         // Enable ISR
-        gpio_intr_enable(GPIO_SLEEP_WAKE);
+        gpio_intr_enable(GPIO_MODE_SWITCH);
 
         // Wait for task notification from ISR
         (void) ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
         // Disable ISR
-        gpio_intr_disable(GPIO_SLEEP_WAKE);
+        gpio_intr_disable(GPIO_MODE_SWITCH);
 
         // Perform debounce check on ISR
-        if (!gpio_debounce_check(GPIO_SLEEP_WAKE, &gpio_level)) {
+        if (!gpio_debounce_check(GPIO_MODE_SWITCH, &gpio_level)) {
             // Debounce check failed, just a spurious interrupt
             // Move on and disregard level
             continue;
         }
-        sleep_isr_count++;
 
-        // For now, do nothing. Just a test
+        if (gpio_level == 0) {
+            mode_switch_isr_count++;
+            // Button is pressed, get mode switch semaphore
+            xSemaphoreTake(xModeSwitchMutex, portMAX_DELAY);
+            // Get int value
+            int mode_int = (int)vocoder_mode;
+            // Increment mode int, with modulo for max number of modes
+            mode_int++;
+            mode_int %= (int)MAX_VOCODER_MODE;
+            // Set enum to value
+            vocoder_mode = (vocoder_mode_e)mode_int;
+            // Set LEDs to match new vocoder mode, if not in INMP441 mode
+        #ifndef INMP441_MIC
+            set_mode_leds();
+        #endif
+            // Give back semaphore
+            xSemaphoreGive(xModeSwitchMutex);
+        }
+        // If 1, do nothing for now
+
     }
 
 }
@@ -443,6 +511,8 @@ void app_main(void)
 
     // Create mutex for debug buffers
     xDbgMutex = xSemaphoreCreateMutex();
+    // Create semaphore for mode switching
+    xModeSwitchMutex = xSemaphoreCreateMutex();
 
     // Instantiate event group for task sync
     xTaskSyncBits = xEventGroupCreate();
@@ -502,15 +572,15 @@ void app_main(void)
         TASK_STATS_CORE
     );
 
-    ESP_LOGW(TAG, "Starting sleep/wake GPIO task...");
+    ESP_LOGW(TAG, "Starting mode switch GPIO task...");
     xReturned |= xTaskCreatePinnedToCore(
-        enter_sleep, 
-        "Sleep Task",
-        SLEEP_TASK_STACK_SIZE,
+        mon_mode_switch, 
+        "Mode Switch Task",
+        MODE_SWITCH_TASK_STACK_SIZE,
         NULL,
-        SLEEP_TASK_PRIORITY,
-        &xSleepTaskHandle,
-        SLEEP_TASK_CORE
+        MODE_SWITCH_TASK_PRIORITY,
+        &xModeSwitchTaskHandle,
+        MODE_SWITCH_TASK_CORE
     );
 
     // Verify all tasks started properly
