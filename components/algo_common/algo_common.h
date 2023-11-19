@@ -9,6 +9,7 @@
  * 
  */
 
+#include <stdbool.h>
 #include "esp_err.h"
 
 #define MAX(x, y) ((x > y) ? x : y)
@@ -16,6 +17,7 @@
 #define FFT_DB_BASE (1e4) // Base value for comparison when calculating dB values of magnitude
 
 #define N_SAMPLES (4096) // Number of samples for FFT operations
+#define FFT_MOD_SIZE (N_SAMPLES/2 + 1) // Number of samples for modification, ie up to Nyquist
 
 /**
  * @brief Calculate FFT from signal data
@@ -55,13 +57,12 @@ esp_err_t inv_fft(float* fft_arr, int num_samples);
 /**
  * @brief Calculate and store magnitudes for FFT array in dB
  * 
- * Compared to 10^4 (TODO: make param?)
- * 
  * @param fft_arr - FFT array (input)
  * @param fft_mag - FFT magnitudes in dB (output)
  * @param num_samples - Number of samples in array
+ * @return float - Maximum magnitude of samples (in dB)
  */
-void calc_fft_mag_db(float* fft_arr, float* fft_mag, int num_samples);
+float calc_fft_mag_db(float* fft_arr, float* fft_mag, int num_samples);
 
 /**
  * @brief Calculate the FFT phase at the given index

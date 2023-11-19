@@ -13,16 +13,21 @@
 #ifndef __PEAK_SHIFT__
 #define __PEAK_SHIFT__
 
-#include <openbsd_tree.h>
+#include <algo_common.h>
+
 // Minimum threshold to consider magnitude a peak
 // Value is empirical, based on testing of sound quality with peak-finding algorithm and calc time
-#define PEAK_THRESHOLD_DB (0)
-#define MAX_PEAKS (150) // Maximum number of peaks stored for moving/comparison
 #define MAX_PRINT_PEAKS (5) // To prevent overloading
 #define BAND_DIV_NBINS (16) // Number of bins for each 'band' when calculating peaks
 
+// Counter and flag array
+static unsigned _num_peaks = 0;
+static uint8_t _peak_flag_arr[(FFT_MOD_SIZE / 8) + 1];
+
+#define SET_ARR_BIT(arr, idx, val) (arr[idx/8] |= ((val) ? 1 : 0) << (idx % 8))
+#define GET_ARR_BIT(arr, idx)      ((arr[idx/8] >> (idx % 8)) & 0x1)
+
 typedef struct {
-  int num_samples;            // Number of samples N per FFT (*full* FFT, not just relevant portion)
   int hop_size;               // Hop size of analysis
   float bin_freq_step;        // Frequency increment per bin of FFT array (sampling freq/N)
   float* fft_ptr;             // Pointer to input FFT array of current frame (size 2*N)
@@ -30,21 +35,6 @@ typedef struct {
   float* fft_mag_ptr;         // Pointer to input FFT magnitude array of current frame (size N)
   float* fft_out_ptr;         // Pointer to output FFT (size 2*N)
 } peak_shift_cfg_t;
-
-typedef struct {
-  int idx;              // Index of peak in FFT array (non-doubled)
-  float mag_db;         // Magnitude at peak in dB
-  int left_bound;       // Leftmost index of ROI (non-doubled)
-  int right_bound;      // Rightmost index of ROI (non-doubled)
-  float inst_freq;      // Instantaneous frequency represented by peak
-  float phase;          // Phase value of peak
-} peak_data_t;
-
-// Tree node, for self-sorting
-struct peak_node_t{
-  SPLAY_ENTRY(peak_node_t) entry;
-  peak_data_t data;
-};
 
 /**
  * @brief Store peak shift algorithm configuration and pointers

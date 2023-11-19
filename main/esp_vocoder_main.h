@@ -48,10 +48,11 @@ int N = N_SAMPLES;
 __attribute__((aligned(16))) float rx_FFT[N_SAMPLES * 2]; // Will be complex
 __attribute__((aligned(16))) float tx_iFFT[N_SAMPLES * 2];
 // Peak shift buffers
-#define FFT_MOD_SIZE (N_SAMPLES/2 + 1) // +1 for midpoint N/2
 __attribute__((aligned(16))) float prev_rx_FFT[2 * FFT_MOD_SIZE]; // Needed for instantaneous angle calc
 __attribute__((aligned(16))) float rx_FFT_mag[FFT_MOD_SIZE]; // Needed for peak shifting
 __attribute__((aligned(16))) float run_phase_comp[2 * FFT_MOD_SIZE]; // Cumulative phase compensation buffer
+#define NOISE_THRESHOLD_DB (28) // Empirical
+#define SILENCE_RESET_COUNT (10) // ~every half second
 
 // Ping-pong buffers
 #define NUM_BUFFERS (2)
@@ -151,6 +152,7 @@ static vocoder_mode_e vocoder_mode = MOD_CHORUS;
 static unsigned loop_count      = 0;
 static float dsp_calc_time_sum  = 0;
 static float num_peaks_sum      = 0;
+static unsigned phase_reset_count = 0;
 static unsigned rx_ovfl_hit     = 0;
 static unsigned tx_ovfl_hit     = 0;
 static unsigned mode_switch_isr_count = 0;

@@ -46,6 +46,7 @@
 void audio_data_modification(int* rxBuffer, int* txBuffer) {
     static const char* TAG = "Audio Modification";
     static vocoder_mode_e prev_vocoder_mode = MOD_CHORUS;
+    static unsigned silence_count = 0;
 
     // Copy RX overlap into debug buffer
     if (xSemaphoreTake(xDbgMutex, 500 / portTICK_PERIOD_MS) != pdTRUE) {
@@ -71,57 +72,69 @@ void audio_data_modification(int* rxBuffer, int* txBuffer) {
     // FFT Calculation
     ESP_ERROR_CHECK(calc_fft(rx_FFT, N));
 
+    // Magnitude calculation
+    float max_mag_db = calc_fft_mag_db(rx_FFT, rx_FFT_mag, FFT_MOD_SIZE);
+
     // Find peaks
     int num_peaks = find_local_peaks();
     configASSERT( num_peaks >= 0 ); // If -1, reached max
     num_peaks_sum += num_peaks;
 
+    // Perform peak shift, if there are any peaks
+    // First get mode mutex
+    xSemaphoreTake(xModeSwitchMutex, 10 / portTICK_PERIOD_MS); // Wait very little time to prevent latency
 
-    if (num_peaks > 0) {
-        // Perform peak shift, if there are any peaks
-        // First get mode mutex
-        xSemaphoreTake(xModeSwitchMutex, 10 / portTICK_PERIOD_MS); // Wait very little time to prevent latency
+    // Conditions for resetting phase
+    if (prev_vocoder_mode != vocoder_mode) {
         // Reset phase compensation array on mode switch
-        if (prev_vocoder_mode != vocoder_mode) {
-            // Reset phase before continuing
-            reset_phase_comp_arr(run_phase_comp);
-        }
-        switch (vocoder_mode) {
-            case MOD_CHORUS: {
-                // Perform full chorus shift
-                for (int i = 0; i < NUM_PITCH_SHIFTS; i++) {
-                    shift_peaks_int(PITCH_SHIFT_FACTORS[i], PITCH_SHIFT_GAINS[i], run_phase_comp);
-                }
-                break;
-            }
-            case MOD_LOW: {
-                shift_peaks_int(LOW_EFFECT_SHIFT, LOW_EFFECT_GAIN, run_phase_comp);
-                break;
-            }
-            case MOD_HIGH: {
-                shift_peaks_int(HIGH_EFFECT_SHIFT, HIGH_EFFECT_GAIN, run_phase_comp);
-                break;
-            }
-            case PASSTHROUGH: {
-                // NOTE: this could just be another copy situation
-                shift_peaks_int(PASSTHROUGH_SHIFT, PASSTHROUGH_GAIN, run_phase_comp);
-                break;
-            }
-            default: {
-                // Copy in original sound, reset running phase comp
-                memcpy(tx_iFFT, rx_FFT, FFT_MOD_SIZE * 2 * sizeof(float));
-                reset_phase_comp_arr(run_phase_comp);
-            }
-        }
-        // Save previous mode
-        prev_vocoder_mode = vocoder_mode;
-        // Give mutex
-        xSemaphoreGive(xModeSwitchMutex);
-    } else {
-        // Copy in original sound, reset running phase comp
-        memcpy(tx_iFFT, rx_FFT, FFT_MOD_SIZE * 2 * sizeof(float));
         reset_phase_comp_arr(run_phase_comp);
+        // Reset silence count
+        silence_count = 0;
+    } else if (max_mag_db < NOISE_THRESHOLD_DB) {
+        // Reset array if near silence (below threshold) base on counter
+        silence_count++;
+        if (silence_count % SILENCE_RESET_COUNT) {
+            reset_phase_comp_arr(run_phase_comp);
+            phase_reset_count++;
+        }
+    } else {
+        // Reset silence count
+        silence_count = 0;
     }
+    // Otherwise, leave running
+
+    switch (vocoder_mode) {
+        case MOD_CHORUS: {
+            // Perform full chorus shift
+            for (int i = 0; i < NUM_PITCH_SHIFTS; i++) {
+                shift_peaks_int(PITCH_SHIFT_FACTORS[i], PITCH_SHIFT_GAINS[i], run_phase_comp);
+            }
+            break;
+        }
+        case MOD_LOW: {
+            shift_peaks_int(LOW_EFFECT_SHIFT, LOW_EFFECT_GAIN, run_phase_comp);
+            break;
+        }
+        case MOD_HIGH: {
+            shift_peaks_int(HIGH_EFFECT_SHIFT, HIGH_EFFECT_GAIN, run_phase_comp);
+            break;
+        }
+        case PASSTHROUGH: {
+            // NOTE: this could just be another copy situation
+            shift_peaks_int(PASSTHROUGH_SHIFT, PASSTHROUGH_GAIN, run_phase_comp);
+            break;
+        }
+        default: {
+            // Copy in original sound, reset running phase comp
+            memcpy(tx_iFFT, rx_FFT, FFT_MOD_SIZE * 2 * sizeof(float));
+            reset_phase_comp_arr(run_phase_comp);
+            phase_reset_count++;
+        }
+    }
+    // Save previous mode
+    prev_vocoder_mode = vocoder_mode;
+    // Give mutex
+    xSemaphoreGive(xModeSwitchMutex);
 
     // Calculate magnitudes
     calc_fft_mag_db(tx_iFFT, tx_FFT_mag, PLOT_LEN);
@@ -360,8 +373,8 @@ void print_task_stats(void* pvParameters)
         // Calculate average number of peaks "detected" by algorithm
         float num_peaks_avg = num_peaks_sum / loop_count;
         
-        ESP_LOGI(TAG, "Running average DSP calc time: %.4f ms, avg num peaks: %.2f",
-            dsp_calc_time_avg, num_peaks_avg);
+        ESP_LOGI(TAG, "Running average DSP calc time: %.4f ms, avg num peaks: %.2f, phase comp reset %0d times",
+            dsp_calc_time_avg, num_peaks_avg, phase_reset_count);
         ESP_LOGI(TAG, "TX ovfl hit: %0d, RX ovfl hit: %0d, mode switch count: %0d, current mode: %0d",
                  tx_ovfl_hit, rx_ovfl_hit, mode_switch_isr_count, vocoder_mode);
 
@@ -492,7 +505,6 @@ void app_main(void)
 
     // Set peak shift algorithm config
     peak_shift_cfg_t cfg = {
-        .num_samples = N,
         .hop_size    = HOP_SIZE,
         .bin_freq_step = 1.0 * I2S_SAMPLING_FREQ_HZ / N_SAMPLES,
         .fft_ptr = rx_FFT,
