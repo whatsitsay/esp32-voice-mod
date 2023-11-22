@@ -82,31 +82,6 @@ int find_local_peaks(void)
     if (i % BAND_DIV_NBINS == BAND_DIV_NBINS - 1) num_neighbors++;
   }
 
-  // // Iterate through all peaks and populate other data values
-  // // Limits longer calculations, like phase, to just actual chosen peaks
-  // SPLAY_FOREACH(curr_peak, peak_tree, &_head)
-  // {
-  //   // Store bounds
-  //   int num_neighbors = i / BAND_DIV_NBINS;
-  //   left_bound = i - num_neighbors;
-  //   // For right bound, cap at Nyquist bin
-  //   right_bound = MIN(i + num_neighbors, N_SAMPLES/2);
-
-  //   // Store phase
-  //   peak_phase = get_idx_phase(peak_shift_cfg->fft_ptr, i);
-
-  //   // Better estimate actual frequency of peak using phase difference
-  //   // with previous frame (back calculation only, as this is real-time)
-  //   float phase_diff = peak_phase - get_idx_phase(peak_shift_cfg->fft_prev_ptr, i);
-  //   // Bound between pi and -pi
-  //   phase_diff = MIN(M_PI, phase_diff);
-  //   phase_diff = MAX(-M_PI, phase_diff);
-  //   // Correction is defined as the ratio of this phase diff over 2pi, times the bin frequency step
-  //   float freq_diff = (phase_diff * peak_shift_cfg->bin_freq_step) / (2 * M_PI);
-  //   // Correct for instantaneous frequency estimate
-  //   inst_freq = (i * peak_shift_cfg->bin_freq_step) + freq_diff;
-  // }
-
   // // Return number of peaks
   return _num_peaks;
 }
@@ -115,34 +90,6 @@ void print_local_peaks(void)
 {
   ESP_LOGW(TAG, "%d peaks detected", _num_peaks);
   // TODO: maybe have some way to display peak indicies
-  // if (_num_peaks == 0) return;
-
-  // char peak_str[1024];
-  // // Copy in initial string. Can be done without size, as it is much less than buffer length
-  // sprintf(peak_str, "%d Largest Peak Values (Hz): ", MAX_PRINT_PEAKS);
-
-  // struct peak_node_t* curr_peak = SPLAY_MIN(peak_tree, &_head);
-  // for (int i = 0; i < _num_peaks; i++)
-  // {
-  //   char peak_val[50];
-  //   // Iterate through tree until last few entries
-  //   // Need to iterate this way given unidirectional nature of tree
-  //   // (I.e., can only traverse with SPLAY_NEXT to next higher value)
-  //   if (i > _num_peaks - 1 - MAX_PRINT_PEAKS)
-  //   {
-  //     configASSERT(curr_peak != NULL);
-  //     int peak_freq_hz = roundf(inst_freq);
-  //     float peak_mag_db = mag_db;
-  //     int left_bound = left_bound * peak_shift_cfg->bin_freq_step;
-  //     int right_bound = right_bound * peak_shift_cfg->bin_freq_step;
-  //     sprintf(peak_val, "%d (%.2f dB, %d-%d) ", peak_freq_hz, peak_mag_db, left_bound, right_bound);
-  //     strcat(peak_str, peak_val);
-  //   }
-
-  //   curr_peak = SPLAY_NEXT(peak_tree, &_head, curr_peak);
-  // }
-
-  // ESP_LOGW(TAG, "%s", peak_str);
 }
 
 void shift_peaks_int(float shift_factor, float shift_gain, float* run_phase_comp_ptr)
