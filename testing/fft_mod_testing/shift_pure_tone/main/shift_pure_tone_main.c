@@ -184,7 +184,7 @@ void audio_data_modification(int* txBuffer, int* rxBuffer) {
     num_peaks_sum += num_peaks;
 
     // Perform peak shift, if there are any peaks
-    if (num_peaks > 0) shift_peaks_int(SHIFT_FACTOR, run_phase_comp); 
+    if (num_peaks > 0) shift_peaks(SHIFT_FACTOR, run_phase_comp); 
     else reset_phase_comp_arr(run_phase_comp); // If no peaks, reset running phase compensation
 
     // Calculate magnitudes for output FFT (debug)

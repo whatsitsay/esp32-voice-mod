@@ -53,10 +53,6 @@ void audio_data_modification(int* rxBuffer, int* txBuffer) {
         ESP_LOGE(TAG, "Failed to get mutex for RX debug buffer!");
     }
 
-    // Copy former half of current rx_FFT into previous FFT buffer
-    // Use sizeof previous buffer, given it should be smaller (symmetrical data)
-    memcpy(prev_rx_FFT, rx_FFT, sizeof(prev_rx_FFT));
-
     // Copy values of rxBuffer into FFT buffer
     for (int i = 0; i < N_SAMPLES; i++) {
         // Select sample. If first half, use rxBuffer_overlap. Otherwise use rxBuffer
@@ -107,21 +103,21 @@ void audio_data_modification(int* rxBuffer, int* txBuffer) {
         case MOD_CHORUS: {
             // Perform full chorus shift
             for (int i = 0; i < NUM_PITCH_SHIFTS; i++) {
-                shift_peaks_int(PITCH_SHIFT_FACTORS[i], PITCH_SHIFT_GAINS[i], run_phase_comp);
+                shift_peaks(PITCH_SHIFT_FACTORS[i], PITCH_SHIFT_GAINS[i], run_phase_comp);
             }
             break;
         }
         case MOD_LOW: {
-            shift_peaks_int(LOW_EFFECT_SHIFT, LOW_EFFECT_GAIN, run_phase_comp);
+            shift_peaks(LOW_EFFECT_SHIFT, LOW_EFFECT_GAIN, run_phase_comp);
             break;
         }
         case MOD_HIGH: {
-            shift_peaks_int(HIGH_EFFECT_SHIFT, HIGH_EFFECT_GAIN, run_phase_comp);
+            shift_peaks(HIGH_EFFECT_SHIFT, HIGH_EFFECT_GAIN, run_phase_comp);
             break;
         }
         case PASSTHROUGH: {
             // NOTE: this could just be another copy situation
-            shift_peaks_int(PASSTHROUGH_SHIFT, PASSTHROUGH_GAIN, run_phase_comp);
+            shift_peaks(PASSTHROUGH_SHIFT, PASSTHROUGH_GAIN, run_phase_comp);
             break;
         }
         default: {
@@ -136,7 +132,11 @@ void audio_data_modification(int* rxBuffer, int* txBuffer) {
     // Give mutex
     xSemaphoreGive(xModeSwitchMutex);
 
-    // Calculate magnitudes
+    // Calculate phases for both input and output, store in previous frame buffers
+    calc_fft_phase(rx_FFT, prev_rx_phase, FFT_MOD_SIZE);
+    calc_fft_phase(tx_iFFT, prev_tx_phase, FFT_MOD_SIZE);
+
+    // Calculate output magnitudes
     calc_fft_mag_db(tx_iFFT, tx_FFT_mag, PLOT_LEN);
 
     // Fill latter half of FFT with conjugate mirror data
@@ -497,6 +497,8 @@ void app_main(void)
     // Clear out all other memory buffers
     memset(rx_FFT, 0, sizeof(rx_FFT));
     memset(tx_iFFT, 0.0, sizeof(tx_iFFT));
+    memset(prev_rx_phase, 0.0, sizeof(prev_rx_phase));
+    memset(prev_tx_phase, 0.0, sizeof(prev_tx_phase));
     memset(txBuffer_overlap, 0, sizeof(txBuffer_overlap));
     memset(rxBuffer_overlap, 0, sizeof(rxBuffer_overlap));
 
@@ -508,9 +510,10 @@ void app_main(void)
         .hop_size    = HOP_SIZE,
         .bin_freq_step = 1.0 * I2S_SAMPLING_FREQ_HZ / N_SAMPLES,
         .fft_ptr = rx_FFT,
-        .fft_prev_ptr = prev_rx_FFT,
         .fft_mag_ptr = rx_FFT_mag,
         .fft_out_ptr = tx_iFFT,
+        .fft_prev_phase = prev_rx_phase,
+        .fft_out_prev_phase = prev_tx_phase,
     };
     init_peak_shift_cfg(&cfg);
 

@@ -199,7 +199,7 @@ void audio_data_modification(int* txBuffer, int* rxBuffer) {
         memset(tx_iFFT, 0, sizeof(tx_iFFT));
         // Perform all peak shifts, adding them together
         for (int i = 0; i < NUM_PITCH_SHIFTS; i++) {
-            shift_peaks_int(pitch_shift_factors[i], run_phase_comp);
+            shift_peaks(pitch_shift_factors[i], run_phase_comp);
         }
     } else {
         memcpy(tx_iFFT, rx_FFT, FFT_MOD_SIZE * 2 * sizeof(int)); // Copy RX->TX

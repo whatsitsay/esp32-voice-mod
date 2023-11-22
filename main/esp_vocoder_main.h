@@ -48,9 +48,11 @@ int N = N_SAMPLES;
 __attribute__((aligned(16))) float rx_FFT[N_SAMPLES * 2]; // Will be complex
 __attribute__((aligned(16))) float tx_iFFT[N_SAMPLES * 2];
 // Peak shift buffers
-__attribute__((aligned(16))) float prev_rx_FFT[2 * FFT_MOD_SIZE]; // Needed for instantaneous angle calc
 __attribute__((aligned(16))) float rx_FFT_mag[FFT_MOD_SIZE]; // Needed for peak shifting
 __attribute__((aligned(16))) float run_phase_comp[2 * FFT_MOD_SIZE]; // Cumulative phase compensation buffer
+float prev_rx_phase[FFT_MOD_SIZE]; // Needed for input instantaneous angle calc
+float prev_tx_phase[FFT_MOD_SIZE]; // Needed for output phase calc
+
 #define NOISE_THRESHOLD_DB (28) // Empirical
 #define SILENCE_RESET_COUNT (10) // ~every half second
 

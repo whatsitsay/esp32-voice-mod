@@ -189,7 +189,7 @@ void audio_data_modification(int* txBuffer, int* rxBuffer) {
     // Perform peak shift, if there are any peaks
     if (num_peaks > 0) {
         memset(tx_iFFT, 0, sizeof(tx_iFFT));
-        shift_peaks_int(SHIFT_FACTOR, run_phase_comp); 
+        shift_peaks(SHIFT_FACTOR, run_phase_comp); 
     }
     else {
         memcpy(tx_iFFT, rx_FFT, FFT_MOD_SIZE * 2 * sizeof(int)); // Copy RX->TX

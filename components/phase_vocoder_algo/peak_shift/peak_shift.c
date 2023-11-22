@@ -92,7 +92,7 @@ void print_local_peaks(void)
   // TODO: maybe have some way to display peak indicies
 }
 
-void shift_peaks_int(float shift_factor, float shift_gain, float* run_phase_comp_ptr)
+void shift_peaks(float shift_factor, float shift_gain, float* run_phase_comp_ptr)
 {
   // Iterate through peak flag array
   for (int i = 0; i < FFT_MOD_SIZE; i++)
@@ -111,7 +111,7 @@ void shift_peaks_int(float shift_factor, float shift_gain, float* run_phase_comp
 
     // Better estimate actual frequency of peak using phase difference
     // with previous frame (back calculation only, as this is real-time)
-    float phase_diff = peak_phase - get_idx_phase(peak_shift_cfg->fft_prev_ptr, i);
+    float phase_diff = peak_phase - peak_shift_cfg->fft_prev_phase[i];
     // Bound between pi and -pi
     phase_diff = MIN(M_PI, phase_diff);
     phase_diff = MAX(-M_PI, phase_diff);
@@ -129,15 +129,23 @@ void shift_peaks_int(float shift_factor, float shift_gain, float* run_phase_comp
     int new_roi_start = left_bound + idx_shift;
     int new_roi_end   = right_bound + idx_shift;
 
-    // Correct frequency change to be this integer increment
+    // Correct frequency change to be this integer increment first
     // Should be uncorrected for sampling frequency
     float delta_f = (2 * M_PI * idx_shift) / (1.0 * N_SAMPLES);
 
-    // Calculate phase compensation for ROI based on this delta freq
-    // NOTE: This is pulled from the paper directly, but doesn't quite make
-    // sense. I suppose it's representing the phase shift as a function of frequency?
-    float phase_comp_real = cosf(delta_f * peak_shift_cfg->hop_size);
-    float phase_comp_imag = sinf(delta_f * peak_shift_cfg->hop_size);
+    // Next, correct by remainder based on previous phase to interpolate frequency bin
+    float freq_remainder = delta_f_raw - delta_f;
+
+    // Finally, use the phase difference approximation to approximate the increment in phase
+    int new_peak_idx = (i < 0)           ? -1 * i : // Reflect back along origin
+                  (i > N_SAMPLES) ? (2 * N_SAMPLES) - i : // Reflect along upper boundary
+                  i; // Use index as-is
+    float out_phase_diff = (2 * M_PI * freq_remainder / peak_shift_cfg->bin_freq_step) + peak_shift_cfg->fft_out_prev_phase[new_peak_idx];
+
+    // Calculate phase compensation for ROI based on integer freq shift + phase diff for inst freq
+    // TODO: does this make sense? Supposed to be attempting to force frequency bin interpolation
+    float phase_comp_real = cosf((delta_f * peak_shift_cfg->hop_size) + out_phase_diff);
+    float phase_comp_imag = sinf((delta_f * peak_shift_cfg->hop_size) + out_phase_diff);
 
     // Iterate through ROI
     // Increment by 2's for complex values
