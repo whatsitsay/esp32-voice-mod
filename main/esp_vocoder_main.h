@@ -41,7 +41,7 @@
 int N = N_SAMPLES;
 
 // I2S macros
-#define I2S_SAMPLING_FREQ_HZ (40960) // Lower for more even freq resolution
+#define I2S_SAMPLING_FREQ_HZ (44100) // Standard sampling freq
 #define I2S_DOWNSHIFT (8) // 24-bit precision, can downshift safely by byte for FFT calcs
 
 // FFT buffers
@@ -104,7 +104,7 @@ EventGroupHandle_t xTaskSyncBits;
 #define SWAP_COMPLETE_BIT ( 1 << 3 )
 #define BUFF_SWAP_BITS (DSP_TASK_BIT | TX_TASK_BIT | RX_TASK_BIT) // Sync to initiate buffer swap
 #define ALL_SYNC_BITS  (BUFF_SWAP_BITS | SWAP_COMPLETE_BIT) // Sync to move on
-#define SYNC_TIMEOUT_TICKS  (500 / portTICK_PERIOD_MS) // Raise error if not synced by this point
+#define SYNC_TIMEOUT_TICKS  (1000 / portTICK_PERIOD_MS) // Raise error if not synced by this point
 
 // Semaphores
 SemaphoreHandle_t xDbgMutex, xModeSwitchMutex;
@@ -129,7 +129,7 @@ static const float PITCH_SHIFT_GAINS[] = {
 };
 
 #define LOW_EFFECT_SHIFT  (0.75)
-#define LOW_EFFECT_GAIN   (1.1)
+#define LOW_EFFECT_GAIN   (1.2)
 #define HIGH_EFFECT_SHIFT (1.5)
 #define HIGH_EFFECT_GAIN  (1.0)
 #define PASSTHROUGH_SHIFT (1.0)
