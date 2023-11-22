@@ -342,9 +342,12 @@ esp_err_t es_toggle_power_amp()
     // should do for now however
     bool headphone_detect = !gpio_get_level(HEADPHONE_DETECT_GPIO);
     // Power amp should be set opposite to headphone detect
-    gpio_set_level(POWER_AMP_EN_GPIO, (int)(!headphone_detect));
+    return es_set_power_amp(!headphone_detect);
+}
 
-    return ESP_OK;
+esp_err_t es_set_power_amp(bool en)
+{
+    return gpio_set_level(POWER_AMP_EN_GPIO, (int)en);
 }
 
 void es_i2s_init(i2s_chan_handle_t* tx_handle, i2s_chan_handle_t* rx_handle, int i2s_sample_rate)

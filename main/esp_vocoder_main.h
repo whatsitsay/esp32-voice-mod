@@ -23,6 +23,7 @@
 #include "esp_task_wdt.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/portmacro.h"
 #include "freertos/semphr.h"
 #include "freertos/event_groups.h"
 #include "driver/i2s_std.h"
@@ -41,16 +42,17 @@
 int N = N_SAMPLES;
 
 // I2S macros
-#define I2S_SAMPLING_FREQ_HZ (44100) // Standard sampling freq
+#define I2S_SAMPLING_FREQ_HZ (40960) // Slightly lower, but more even frequency resolution
 #define I2S_DOWNSHIFT (8) // 24-bit precision, can downshift safely by byte for FFT calcs
 
 // FFT buffers
 __attribute__((aligned(16))) float rx_FFT[N_SAMPLES * 2]; // Will be complex
 __attribute__((aligned(16))) float tx_iFFT[N_SAMPLES * 2];
 // Peak shift buffers
-__attribute__((aligned(16))) float rx_FFT_mag[FFT_MOD_SIZE]; // Needed for peak shifting
-__attribute__((aligned(16))) float run_phase_comp[2 * FFT_MOD_SIZE]; // Cumulative phase compensation buffer
-float prev_rx_phase[FFT_MOD_SIZE]; // Needed for input instantaneous angle calc
+float rx_FFT_mag[FFT_MOD_SIZE]; // Needed for peak shifting
+float run_phase_comp[2 * FFT_MOD_SIZE]; // Cumulative phase compensation buffer
+float rx_FFT_phase[FFT_MOD_SIZE]; // Needed for input instantaneous freq calc
+float prev_rx_phase[FFT_MOD_SIZE]; // Needed for input instantaneous freq calc
 float prev_tx_phase[FFT_MOD_SIZE]; // Needed for output phase calc
 
 #define NOISE_THRESHOLD_DB (28) // Empirical
@@ -108,6 +110,7 @@ EventGroupHandle_t xTaskSyncBits;
 
 // Semaphores
 SemaphoreHandle_t xDbgMutex, xModeSwitchMutex;
+portMUX_TYPE critical_mux = portMUX_INITIALIZER_UNLOCKED;
 
 #define PLOT_LEN (128)
 __attribute__((aligned(16))) float tx_FFT_mag[PLOT_LEN]; // For debug only

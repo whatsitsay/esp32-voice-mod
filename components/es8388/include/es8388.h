@@ -100,6 +100,8 @@ esp_err_t es_i2s_mclk_gpio_select(i2s_port_t i2s_num, gpio_num_t gpio_num);
 
 esp_err_t es_toggle_power_amp();
 
+esp_err_t es_set_power_amp(bool en);
+
 void es_i2s_init();
 
 #endif // _ES8388_H_

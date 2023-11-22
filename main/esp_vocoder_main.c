@@ -19,6 +19,7 @@
 #include <inttypes.h>
 #include "sdkconfig.h"
 #include "esp_err.h"
+#include "esp_debug_helpers.h"
 #include "esp_task_wdt.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -68,12 +69,16 @@ void audio_data_modification(int* rxBuffer, int* txBuffer) {
     // FFT Calculation
     ESP_ERROR_CHECK(calc_fft(rx_FFT, N));
 
-    // Magnitude calculation
+    // Store previous frame phase
+    memcpy(prev_rx_phase, rx_FFT_phase, sizeof(prev_rx_phase));
+
+    // Magnitude and phase calculations
     float max_mag_db = calc_fft_mag_db(rx_FFT, rx_FFT_mag, FFT_MOD_SIZE);
+    calc_fft_phase(rx_FFT, rx_FFT_phase, FFT_MOD_SIZE);
 
     // Find peaks
     int num_peaks = find_local_peaks();
-    configASSERT( num_peaks >= 0 ); // If -1, reached max
+
     num_peaks_sum += num_peaks;
 
     // Perform peak shift, if there are any peaks
@@ -132,8 +137,7 @@ void audio_data_modification(int* rxBuffer, int* txBuffer) {
     // Give mutex
     xSemaphoreGive(xModeSwitchMutex);
 
-    // Calculate phases for both input and output, store in previous frame buffers
-    calc_fft_phase(rx_FFT, prev_rx_phase, FFT_MOD_SIZE);
+    // Calculate phases for output, store in previous frame buffer
     calc_fft_phase(tx_iFFT, prev_tx_phase, FFT_MOD_SIZE);
 
     // Calculate output magnitudes
@@ -227,6 +231,7 @@ static IRAM_ATTR bool tx_sent_overflow(i2s_chan_handle_t handle, i2s_event_data_
 
 void proc_audio_data(void* pvParameters)
 {
+    static const char* TAG = "Audio DSP";
     // Wait for initial notification from RX task, so first audio data is half-valid
     // This should limit delay to just the first swap, i.e. 50 ms
     (void) ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
@@ -247,7 +252,13 @@ void proc_audio_data(void* pvParameters)
         unsigned int end_cc = dsp_get_cpu_cycle_count();
 
         // Calculate time spent, add to running sum
-        dsp_calc_time_sum += (float)(end_cc - start_cc) / 240e3;
+        volatile float iter_calc_time = (float)(end_cc - start_cc) / 240e3;
+        if (iter_calc_time > 55) {
+            ESP_LOGE(TAG, "DSP calculation time too long! Should be >= 50 ms, is instead %.3f", iter_calc_time);
+            configASSERT(false);
+        }
+
+        dsp_calc_time_sum += iter_calc_time;
         loop_count++;
 
         // Copy rxBuffer into rxBuffer_overlap
@@ -357,7 +368,7 @@ void print_task_stats(void* pvParameters)
     float* rx_FFT_mag_cpy = (float *)malloc(PLOT_LEN * sizeof(float));
     float* tx_FFT_mag_cpy = (float *)malloc(PLOT_LEN * sizeof(float));
 
-    configASSERT( (rx_FFT_mag_cpy != NULL) && (tx_FFT_mag != NULL) );
+    configASSERT( (rx_FFT_mag_cpy != NULL) && (tx_FFT_mag_cpy != NULL) );
 
     while (1) {
         vTaskDelay(3000 / portTICK_PERIOD_MS);
@@ -511,6 +522,7 @@ void app_main(void)
         .bin_freq_step = 1.0 * I2S_SAMPLING_FREQ_HZ / N_SAMPLES,
         .fft_ptr = rx_FFT,
         .fft_mag_ptr = rx_FFT_mag,
+        .fft_phase_ptr = rx_FFT_phase,
         .fft_out_ptr = tx_iFFT,
         .fft_prev_phase = prev_rx_phase,
         .fft_out_prev_phase = prev_tx_phase,

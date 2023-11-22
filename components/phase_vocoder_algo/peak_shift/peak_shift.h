@@ -31,10 +31,11 @@ typedef struct {
   int hop_size;               // Hop size of analysis
   float bin_freq_step;        // Frequency increment per bin of FFT array (sampling freq/N)
   float* fft_ptr;             // Pointer to input FFT array of current frame (size 2*N)
-  float* fft_mag_ptr;         // Pointer to input FFT magnitude array of current frame (size N)
+  float* fft_mag_ptr;         // Pointer to input FFT magnitude array of current frame (size N/2+1)
+  float* fft_phase_ptr;       // Pointer to input FFT phase array for current frame (size N/2+1)
   float* fft_out_ptr;         // Pointer to output FFT (size 2*N)
-  float* fft_prev_phase;      // Pointer to phase array of the previous input frame (size N)
-  float* fft_out_prev_phase;  // Pointer to phase array of the previous output frame (size N)
+  float* fft_prev_phase;      // Pointer to phase array of the previous input frame (size N/2+1)
+  float* fft_out_prev_phase;  // Pointer to phase array of the previous output frame (size N/2+1)
 } peak_shift_cfg_t;
 
 /**

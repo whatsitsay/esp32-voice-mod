@@ -97,6 +97,7 @@ void shift_peaks(float shift_factor, float shift_gain, float* run_phase_comp_ptr
   // Iterate through peak flag array
   for (int i = 0; i < FFT_MOD_SIZE; i++)
   {
+
     // If not a peak, skip
     if (0 == GET_ARR_BIT(_peak_flag_arr, i)) continue;
 
@@ -107,7 +108,7 @@ void shift_peaks(float shift_factor, float shift_gain, float* run_phase_comp_ptr
     int right_bound = MIN(i + num_neighbors, N_SAMPLES/2);
 
     // Store phase
-    float peak_phase = get_idx_phase(peak_shift_cfg->fft_ptr, i);
+    float peak_phase = peak_shift_cfg->fft_phase_ptr[i];
 
     // Better estimate actual frequency of peak using phase difference
     // with previous frame (back calculation only, as this is real-time)
@@ -133,6 +134,11 @@ void shift_peaks(float shift_factor, float shift_gain, float* run_phase_comp_ptr
     // Should be uncorrected for sampling frequency
     float delta_f = (2 * M_PI * idx_shift) / (1.0 * N_SAMPLES);
 
+    // Calculate phase compensation for ROI based on integer freq shift + phase diff for inst freq
+    float phase_comp_angle = delta_f * peak_shift_cfg->hop_size;
+    float phase_comp_real = cosf(phase_comp_angle);
+    float phase_comp_imag = sinf(phase_comp_angle);
+
     // Next, correct by remainder based on previous phase to interpolate frequency bin
     float freq_remainder = delta_f_raw - delta_f;
 
@@ -140,12 +146,11 @@ void shift_peaks(float shift_factor, float shift_gain, float* run_phase_comp_ptr
     int new_peak_idx = (i < 0)           ? -1 * i : // Reflect back along origin
                   (i > N_SAMPLES) ? (2 * N_SAMPLES) - i : // Reflect along upper boundary
                   i; // Use index as-is
-    float out_phase_diff = (2 * M_PI * freq_remainder / peak_shift_cfg->bin_freq_step) + peak_shift_cfg->fft_out_prev_phase[new_peak_idx];
+    float out_inst_phase_diff = (2 * M_PI * freq_remainder / peak_shift_cfg->bin_freq_step) + peak_shift_cfg->fft_out_prev_phase[new_peak_idx];
 
-    // Calculate phase compensation for ROI based on integer freq shift + phase diff for inst freq
-    // TODO: does this make sense? Supposed to be attempting to force frequency bin interpolation
-    float phase_comp_real = cosf((delta_f * peak_shift_cfg->hop_size) + out_phase_diff);
-    float phase_comp_imag = sinf((delta_f * peak_shift_cfg->hop_size) + out_phase_diff);
+    // Calculate phase compensation due to frequency diff
+    float inst_phase_comp_real = sinf(out_inst_phase_diff);
+    float inst_phase_comp_imag = cosf(out_inst_phase_diff);
 
     // Iterate through ROI
     // Increment by 2's for complex values
@@ -162,11 +167,6 @@ void shift_peaks(float shift_factor, float shift_gain, float* run_phase_comp_ptr
       
       // First multiply current frame phase compensation with running product
       // Product is *cumulative* between frames
-
-      // TODO: may need to double-check this in the case of overlapping sections,
-      // especially if there are multiple ROI in one section. This would effectively
-      // add up the phase compensation. Does this make sense? Or should it be averaged/
-      // use max?
       float prev_run_phase_comp_real = *run_phase_comp_real;
       float prev_run_phase_comp_imag = *run_phase_comp_imag;
       mult_complex(prev_run_phase_comp_real,
@@ -176,6 +176,16 @@ void shift_peaks(float shift_factor, float shift_gain, float* run_phase_comp_ptr
                   run_phase_comp_real,
                   run_phase_comp_imag);
       
+      // Next, multiply by added phase compensation to get instantaneous freq
+      float final_phase_real, final_phase_imag;
+      // FIXME no inst compensation!
+      mult_complex(*run_phase_comp_real,
+                   *run_phase_comp_imag,
+                   inst_phase_comp_real,
+                   inst_phase_comp_imag,
+                   &final_phase_real,
+                   &final_phase_imag);
+      
       // Set value at new ROI index as product of original index
       // value and cumulative phase compensation
       // Index shift is doubled due to real+imag
@@ -184,8 +194,8 @@ void shift_peaks(float shift_factor, float shift_gain, float* run_phase_comp_ptr
       float prod_fft_real, prod_fft_imag;
       mult_complex(orig_fft_real,
                    orig_fft_imag,
-                   *run_phase_comp_real,
-                   *run_phase_comp_imag,
+                   final_phase_real,
+                   final_phase_imag,
                    &prod_fft_real,
                    &prod_fft_imag);
       
