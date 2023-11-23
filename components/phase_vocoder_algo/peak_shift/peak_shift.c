@@ -46,7 +46,6 @@ int find_local_peaks(void)
   memset(_peak_flag_arr, 0, sizeof(_peak_flag_arr));
 
   float* mag_arr = peak_shift_cfg->fft_mag_ptr;
-  int num_neighbors = 0;
 
   // Iterate over magnitude array for indicies within bounds of peak detection,
   // taking into acount comparisons with previous/next neighbors
@@ -56,6 +55,11 @@ int find_local_peaks(void)
     float curr_mag = mag_arr[i];
     // Peak is defined as a frequency whose magnitude is greater than all of its synchornized neighbors
     bool is_peak = true;
+    // Based on the 'CHALLENGE' project (Bargun, Serafin, Erkut 2023), instead of just using midpoints, correlate
+    // adjacent bins only based on band. Lower frequency => less neighbors
+    // Current math is for every band interval, number of adjacent bins to sync goes increments
+    // by 1
+    int num_neighbors = i / BAND_DIV_NBINS;
     // Iterate through neighbors
     // Cap sync at boundaries of FFT
     int lowest_neighbor  = MAX(0, i - num_neighbors);
@@ -73,13 +77,6 @@ int find_local_peaks(void)
 
     // Increment counter if peak
     if (is_peak) _num_peaks++;
-
-    // Based on the 'CHALLENGE' project (Bargun, Serafin, Erkut 2023), instead of just using midpoints, correlate
-    // adjacent bins only based on band. Lower frequency => less neighbors
-    // Current math is for every band interval, number of adjacent bins to sync goes increments
-    // by 1
-    // Thus, increment num neighbors on last bin of band
-    if (i % BAND_DIV_NBINS == BAND_DIV_NBINS - 1) num_neighbors++;
   }
 
   // // Return number of peaks
