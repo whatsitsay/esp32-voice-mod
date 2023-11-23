@@ -62,7 +62,7 @@ int find_local_peaks(void)
     int highest_neighbor = MIN(N_SAMPLES / 2, i + num_neighbors);
     for (int j = lowest_neighbor; j < highest_neighbor; j++) {
       if (j == i) continue; // Skip index itself
-      if (mag_arr[j] > curr_mag) {
+      if (mag_arr[j] >= curr_mag) {
         is_peak = false; // Greater value in range, not a peak
         break; // Save cycles
       }
