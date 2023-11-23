@@ -81,16 +81,16 @@ TaskHandle_t  xTaskStatsHandle;
 TaskHandle_t  xModeSwitchTaskHandle;
 // Stack sizes based empirically on high watermarks, with a little extra room just in case
 // Should be revisited if changes are made
-#define DSP_TASK_STACK_SIZE (15500u) // Watermark: 15284
+#define DSP_TASK_STACK_SIZE (16384u) // Watermark: 14368
 #define DSP_TASK_CORE (0)
-#define RX_TASK_STACK_SIZE (3600u) // Watermark: 3464
+#define RX_TASK_STACK_SIZE (3500u) // Watermark: 3464
 #define RX_TASK_CORE (1)
-#define TX_TASK_STACK_SIZE (3600u) // Watermark: 3456
+#define TX_TASK_STACK_SIZE (3500u) // Watermark: 3456
 #define TX_TASK_CORE (1)
-#define TASK_STATS_STACK_SIZE (3000u) // Watermark: 1164, but crashes on anything lower
+#define TASK_STATS_STACK_SIZE (3000u) // Watermark: 1564, but crashes otherwise
 #define TASK_STATS_CORE (0)
 #define MODE_SWITCH_TASK_CORE (1)
-#define MODE_SWITCH_TASK_STACK_SIZE (1024u) // Check watermark!
+#define MODE_SWITCH_TASK_STACK_SIZE (800u) // Watermark: 212
 
 #define DSP_TASK_PRIORITY (1U) // Just above idle
 #define TX_TASK_PRIORITY (10U) // Higher due to it being blocked
@@ -106,11 +106,11 @@ EventGroupHandle_t xTaskSyncBits;
 #define SWAP_COMPLETE_BIT ( 1 << 3 )
 #define BUFF_SWAP_BITS (DSP_TASK_BIT | TX_TASK_BIT | RX_TASK_BIT) // Sync to initiate buffer swap
 #define ALL_SYNC_BITS  (BUFF_SWAP_BITS | SWAP_COMPLETE_BIT) // Sync to move on
-#define SYNC_TIMEOUT_TICKS  (1000 / portTICK_PERIOD_MS) // Raise error if not synced by this point
+#define I2S_BUFFER_TIME_MS (1000.0 * HOP_SIZE / I2S_SAMPLING_FREQ_HZ) // Transmit/receive buffer time for I2S channels
+#define SYNC_TIMEOUT_TICKS  (5000 / portTICK_PERIOD_MS) // Raise error if not synced by this point
 
 // Semaphores
 SemaphoreHandle_t xDbgMutex, xModeSwitchMutex;
-portMUX_TYPE critical_mux = portMUX_INITIALIZER_UNLOCKED;
 
 #define PLOT_LEN (128)
 __attribute__((aligned(16))) float tx_FFT_mag[PLOT_LEN]; // For debug only

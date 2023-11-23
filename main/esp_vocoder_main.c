@@ -175,6 +175,17 @@ void set_mode_leds()
 
 ///// CALLBACKS ///// 
 
+#if configCHECK_FOR_STACK_OVERFLOW == 1
+void vApplicationStackOverflowHook(TaskHandle_t xTask, signed char *pcTaskName) {
+    size_t data_written;
+    // Flush I2S transmit by sending all 0s
+    memset(txBuffers[i2s_idx], 0, HOP_BUFFER_SIZE_B);
+    i2s_channel_write(tx_handle, stream_data, HOP_BUFFER_SIZE_B, &data_written, 1000 / portTICK_PERIOD_MS);
+    // Restart ESP32
+    esp_restart();
+}
+#endif
+
 /**
  * @brief Callback for RX received event. Will send notification
  * to I2S receive task to pop data.
@@ -253,8 +264,10 @@ void proc_audio_data(void* pvParameters)
 
         // Calculate time spent, add to running sum
         volatile float iter_calc_time = (float)(end_cc - start_cc) / 240e3;
-        if (iter_calc_time > 55) {
-            ESP_LOGE(TAG, "DSP calculation time too long! Should be >= 50 ms, is instead %.3f", iter_calc_time);
+        // Check against buffering time for I2S, with a little extra in case
+        // If this is failed, then the audio will be choppy
+        if (iter_calc_time > 1.1 * I2S_BUFFER_TIME_MS) {
+            ESP_LOGE(TAG, "DSP calculation time too long! Should be <= %.1f ms, is instead %.3f", I2S_BUFFER_TIME_MS, iter_calc_time);
             configASSERT(false);
         }
 
@@ -411,16 +424,17 @@ void print_task_stats(void* pvParameters)
         dsps_view(tx_FFT_mag_cpy, PLOT_LEN, PLOT_LEN, 10, 0, 40, 'o');
 
         // Get stack watermarks
-        UBaseType_t DSPStackWatermark, TxStackWatermark, RxStackWatermark, StatsStackWatermark;
-        DSPStackWatermark = uxTaskGetStackHighWaterMark(xDSPTaskHandle);
-        RxStackWatermark = uxTaskGetStackHighWaterMark(xRxTaskHandle);
-        TxStackWatermark = uxTaskGetStackHighWaterMark(xTxTaskHandle);
-        StatsStackWatermark = uxTaskGetStackHighWaterMark(NULL); // This task
+        UBaseType_t DSPStackWatermark = uxTaskGetStackHighWaterMark(xDSPTaskHandle);
+        UBaseType_t RxStackWatermark = uxTaskGetStackHighWaterMark(xRxTaskHandle);
+        UBaseType_t TxStackWatermark = uxTaskGetStackHighWaterMark(xTxTaskHandle);
+        UBaseType_t ModeSwitchWatermark = uxTaskGetStackHighWaterMark(xModeSwitchTaskHandle);
+        UBaseType_t StatsStackWatermark = uxTaskGetStackHighWaterMark(NULL); // This task
 
         ESP_LOGW(TAG, "Stack Watermarks:");
         ESP_LOGI(TAG, "DSP Task:   %0d", DSPStackWatermark);
         ESP_LOGI(TAG, "Rx Task:    %0d", RxStackWatermark);
         ESP_LOGI(TAG, "Tx Task:    %0d", TxStackWatermark);
+        ESP_LOGI(TAG, "Mode Switch Task: %0d", ModeSwitchWatermark);
         ESP_LOGI(TAG, "Stats Task: %0d", StatsStackWatermark);
 
         size_t free_heap_size = xPortGetFreeHeapSize();
