@@ -22,6 +22,11 @@
 
 static peak_shift_cfg_t* peak_shift_cfg;
 
+// Counter and flag arrays
+static unsigned _num_peaks = 0;
+static uint8_t _peak_flag_arr[(FFT_MOD_SIZE / 8) + 1];
+static float _inst_freq_arr[FFT_MOD_SIZE];
+
 const char* TAG = "Peak Shift Algorithm";
 
 void init_peak_shift_cfg(peak_shift_cfg_t* cfg)
@@ -75,8 +80,27 @@ int find_local_peaks(void)
     // Set flag in array accordingly
     SET_ARR_BIT(_peak_flag_arr, i, is_peak);
 
-    // Increment counter if peak
-    if (is_peak) _num_peaks++;
+    if (is_peak) {
+      // Calculate instantaneous frequency of peak
+      // Get phase of current and previous frames
+      float peak_phase = get_idx_phase(peak_shift_cfg->fft_ptr, i);
+      float prev_phase = get_idx_phase(peak_shift_cfg->fft_prev_ptr, i);
+
+      // Better estimate actual frequency of peak using phase difference
+      // with previous frame (back calculation only, as this is real-time)
+      float phase_diff = peak_phase - prev_phase;
+      // Bound between pi and -pi by taking advantage of periodicity
+      phase_diff = (phase_diff > M_PI) ? -2 * M_PI + phase_diff : // Wraparound to -pi
+                   (phase_diff < -M_PI) ? 2 * M_PI + phase_diff : // Wraparound to +pi
+                   phase_diff;                                    // Within range, use as-is
+      // Correction is defined as the ratio of this phase diff over 2pi, times the bin frequency step
+      float freq_diff = (phase_diff * peak_shift_cfg->bin_freq_step) / (2 * M_PI);
+      // Store inst frequency in array for later use during pitch shifting
+      _inst_freq_arr[i] = (i * peak_shift_cfg->bin_freq_step) + freq_diff;
+
+      // Increment peak counter
+      _num_peaks++;
+    }
   }
 
   // // Return number of peaks
@@ -104,19 +128,8 @@ void shift_peaks(float shift_factor, float shift_gain, float* run_phase_comp_ptr
     // For right bound, cap at Nyquist bin
     int right_bound = MIN(i + num_neighbors, N_SAMPLES/2);
 
-    // Store phase
-    float peak_phase = peak_shift_cfg->fft_phase_ptr[i];
-
-    // Better estimate actual frequency of peak using phase difference
-    // with previous frame (back calculation only, as this is real-time)
-    float phase_diff = peak_phase - peak_shift_cfg->fft_prev_phase[i];
-    // Bound between pi and -pi
-    phase_diff = MIN(M_PI, phase_diff);
-    phase_diff = MAX(-M_PI, phase_diff);
-    // Correction is defined as the ratio of this phase diff over 2pi, times the bin frequency step
-    float freq_diff = (phase_diff * peak_shift_cfg->bin_freq_step) / (2 * M_PI);
-    // Correct for instantaneous frequency estimate
-    float inst_freq = (i * peak_shift_cfg->bin_freq_step) + freq_diff;
+    // Get buffered instantaneous frequency
+    float inst_freq = _inst_freq_arr[i];
 
     // Calculate the desired change in frequency based on the peak instantaneous
     // frequency and the shift factor
@@ -127,10 +140,10 @@ void shift_peaks(float shift_factor, float shift_gain, float* run_phase_comp_ptr
     int new_roi_start = left_bound + idx_shift;
     int new_roi_end   = right_bound + idx_shift;
 
-    // Calculate phase compensation for ROI based on integer freq shift + phase diff for inst freq
-    float phase_comp_angle = delta_f * peak_shift_cfg->hop_size;
-    float phase_comp_real = cosf(phase_comp_angle);
-    float phase_comp_imag = sinf(phase_comp_angle);
+    // Calculate phase compensation for ROI based on freq shift
+    float phase_comp_angle = fmod(delta_f * peak_shift_cfg->hop_size, 2 * M_PI);
+    float phase_comp_real  = cosf(phase_comp_angle);
+    float phase_comp_imag  = sinf(phase_comp_angle);
 
     // Iterate through ROI
     // Increment by 2's for complex values

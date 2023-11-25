@@ -54,6 +54,9 @@ void audio_data_modification(int* rxBuffer, int* txBuffer) {
         ESP_LOGE(TAG, "Failed to get mutex for RX debug buffer!");
     }
 
+    // Copy in previous input FFT
+    memcpy(prev_rx_FFT, rx_FFT, sizeof(prev_rx_FFT));
+
     // Copy values of rxBuffer into FFT buffer
     for (int i = 0; i < N_SAMPLES; i++) {
         // Select sample. If first half, use rxBuffer_overlap. Otherwise use rxBuffer
@@ -69,12 +72,8 @@ void audio_data_modification(int* rxBuffer, int* txBuffer) {
     // FFT Calculation
     ESP_ERROR_CHECK(calc_fft(rx_FFT, N));
 
-    // Store previous frame phase
-    memcpy(prev_rx_phase, rx_FFT_phase, sizeof(prev_rx_phase));
-
-    // Magnitude and phase calculations
+    // Magnitude calculation
     float max_mag_db = calc_fft_mag_db(rx_FFT, rx_FFT_mag, FFT_MOD_SIZE);
-    calc_fft_phase(rx_FFT, rx_FFT_phase, FFT_MOD_SIZE);
 
     // Find peaks
     int num_peaks = find_local_peaks();
@@ -518,8 +517,8 @@ void app_main(void)
 
     // Clear out all other memory buffers
     memset(rx_FFT, 0, sizeof(rx_FFT));
+    memset(prev_rx_FFT, 0, sizeof(prev_rx_FFT));
     memset(tx_iFFT, 0.0, sizeof(tx_iFFT));
-    memset(prev_rx_phase, 0.0, sizeof(prev_rx_phase));
     memset(txBuffer_overlap, 0, sizeof(txBuffer_overlap));
     memset(rxBuffer_overlap, 0, sizeof(rxBuffer_overlap));
 
@@ -531,10 +530,9 @@ void app_main(void)
         .hop_size    = HOP_SIZE,
         .bin_freq_step = 1.0 * I2S_SAMPLING_FREQ_HZ / N_SAMPLES,
         .fft_ptr = rx_FFT,
+        .fft_prev_ptr = prev_rx_FFT,
         .fft_mag_ptr = rx_FFT_mag,
-        .fft_phase_ptr = rx_FFT_phase,
         .fft_out_ptr = tx_iFFT,
-        .fft_prev_phase = prev_rx_phase,
     };
     init_peak_shift_cfg(&cfg);
 

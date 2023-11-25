@@ -48,11 +48,10 @@ int N = N_SAMPLES;
 // FFT buffers
 __attribute__((aligned(16))) float rx_FFT[N_SAMPLES * 2]; // Will be complex
 __attribute__((aligned(16))) float tx_iFFT[N_SAMPLES * 2];
+__attribute__((aligned(16))) float prev_rx_FFT[FFT_MOD_SIZE * 2]; // For inst freq calc
 // Peak shift buffers
 float rx_FFT_mag[FFT_MOD_SIZE]; // Needed for peak shifting
 float run_phase_comp[2 * FFT_MOD_SIZE]; // Cumulative phase compensation buffer
-float rx_FFT_phase[FFT_MOD_SIZE]; // Needed for input instantaneous freq calc
-float prev_rx_phase[FFT_MOD_SIZE]; // Needed for input instantaneous freq calc
 
 #define NOISE_THRESHOLD_DB (28) // Empirical
 #define SILENCE_RESET_COUNT (10) // ~every half second
