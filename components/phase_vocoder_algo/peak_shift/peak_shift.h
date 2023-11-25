@@ -35,7 +35,6 @@ typedef struct {
   float* fft_phase_ptr;       // Pointer to input FFT phase array for current frame (size N/2+1)
   float* fft_out_ptr;         // Pointer to output FFT (size 2*N)
   float* fft_prev_phase;      // Pointer to phase array of the previous input frame (size N/2+1)
-  float* fft_out_prev_phase;  // Pointer to phase array of the previous output frame (size N/2+1)
 } peak_shift_cfg_t;
 
 /**

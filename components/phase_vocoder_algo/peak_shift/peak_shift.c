@@ -120,34 +120,17 @@ void shift_peaks(float shift_factor, float shift_gain, float* run_phase_comp_ptr
 
     // Calculate the desired change in frequency based on the peak instantaneous
     // frequency and the shift factor
-    float delta_f_raw = (shift_factor - 1) * inst_freq;
+    float delta_f = (shift_factor - 1) * inst_freq;
 
     // Round to get the index shift for this ROI
-    int idx_shift = (int)roundf(delta_f_raw / peak_shift_cfg->bin_freq_step);
+    int idx_shift = (int)roundf(delta_f / peak_shift_cfg->bin_freq_step);
     int new_roi_start = left_bound + idx_shift;
     int new_roi_end   = right_bound + idx_shift;
-
-    // Correct frequency change to be this integer increment first
-    // Should be uncorrected for sampling frequency
-    float delta_f = (2 * M_PI * idx_shift) / (1.0 * N_SAMPLES);
 
     // Calculate phase compensation for ROI based on integer freq shift + phase diff for inst freq
     float phase_comp_angle = delta_f * peak_shift_cfg->hop_size;
     float phase_comp_real = cosf(phase_comp_angle);
     float phase_comp_imag = sinf(phase_comp_angle);
-
-    // Next, correct by remainder based on previous phase to interpolate frequency bin
-    float freq_remainder = delta_f_raw - delta_f;
-
-    // Finally, use the phase difference approximation to approximate the increment in phase
-    int new_peak_idx = (i < 0)           ? -1 * i : // Reflect back along origin
-                  (i > N_SAMPLES) ? (2 * N_SAMPLES) - i : // Reflect along upper boundary
-                  i; // Use index as-is
-    float out_inst_phase_diff = (2 * M_PI * freq_remainder / peak_shift_cfg->bin_freq_step) + peak_shift_cfg->fft_out_prev_phase[new_peak_idx];
-
-    // Calculate phase compensation due to frequency diff
-    float inst_phase_comp_real = sinf(out_inst_phase_diff);
-    float inst_phase_comp_imag = cosf(out_inst_phase_diff);
 
     // Iterate through ROI
     // Increment by 2's for complex values
@@ -173,16 +156,6 @@ void shift_peaks(float shift_factor, float shift_gain, float* run_phase_comp_ptr
                   run_phase_comp_real,
                   run_phase_comp_imag);
       
-      // Next, multiply by added phase compensation to get instantaneous freq
-      float final_phase_real, final_phase_imag;
-      // FIXME no inst compensation!
-      mult_complex(*run_phase_comp_real,
-                   *run_phase_comp_imag,
-                   inst_phase_comp_real,
-                   inst_phase_comp_imag,
-                   &final_phase_real,
-                   &final_phase_imag);
-      
       // Set value at new ROI index as product of original index
       // value and cumulative phase compensation
       // Index shift is doubled due to real+imag
@@ -191,8 +164,8 @@ void shift_peaks(float shift_factor, float shift_gain, float* run_phase_comp_ptr
       float prod_fft_real, prod_fft_imag;
       mult_complex(orig_fft_real,
                    orig_fft_imag,
-                   final_phase_real,
-                   final_phase_imag,
+                   *run_phase_comp_real,
+                   *run_phase_comp_imag,
                    &prod_fft_real,
                    &prod_fft_imag);
       

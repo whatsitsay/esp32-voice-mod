@@ -137,9 +137,6 @@ void audio_data_modification(int* rxBuffer, int* txBuffer) {
     // Give mutex
     xSemaphoreGive(xModeSwitchMutex);
 
-    // Calculate phases for output, store in previous frame buffer
-    calc_fft_phase(tx_iFFT, prev_tx_phase, FFT_MOD_SIZE);
-
     // Calculate output magnitudes
     calc_fft_mag_db(tx_iFFT, tx_FFT_mag, PLOT_LEN);
 
@@ -523,7 +520,6 @@ void app_main(void)
     memset(rx_FFT, 0, sizeof(rx_FFT));
     memset(tx_iFFT, 0.0, sizeof(tx_iFFT));
     memset(prev_rx_phase, 0.0, sizeof(prev_rx_phase));
-    memset(prev_tx_phase, 0.0, sizeof(prev_tx_phase));
     memset(txBuffer_overlap, 0, sizeof(txBuffer_overlap));
     memset(rxBuffer_overlap, 0, sizeof(rxBuffer_overlap));
 
@@ -539,7 +535,6 @@ void app_main(void)
         .fft_phase_ptr = rx_FFT_phase,
         .fft_out_ptr = tx_iFFT,
         .fft_prev_phase = prev_rx_phase,
-        .fft_out_prev_phase = prev_tx_phase,
     };
     init_peak_shift_cfg(&cfg);
 

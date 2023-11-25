@@ -53,7 +53,6 @@ float rx_FFT_mag[FFT_MOD_SIZE]; // Needed for peak shifting
 float run_phase_comp[2 * FFT_MOD_SIZE]; // Cumulative phase compensation buffer
 float rx_FFT_phase[FFT_MOD_SIZE]; // Needed for input instantaneous freq calc
 float prev_rx_phase[FFT_MOD_SIZE]; // Needed for input instantaneous freq calc
-float prev_tx_phase[FFT_MOD_SIZE]; // Needed for output phase calc
 
 #define NOISE_THRESHOLD_DB (28) // Empirical
 #define SILENCE_RESET_COUNT (10) // ~every half second
