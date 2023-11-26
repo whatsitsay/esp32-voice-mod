@@ -25,7 +25,7 @@
 #define PLOT_LEN (128)
 
 // Number of samples
-#define HOP_SIZE (N_SAMPLES) // No overlap here, just data gathering
+#define HOP_SIZE (N_SAMPLES / 2) // No overlap here, just data gathering
 #define HOP_BUFFER_SIZE_B (2 * HOP_SIZE * 4) // == length of rx/tx buffers (bytes)
 // rx/tx buffers. Size doubled for L+R (even if only R is used)
 int N = N_SAMPLES;
@@ -46,8 +46,6 @@ static unsigned int full_data_rcvd = 0;
 
 // FFT buffers
 __attribute__((aligned(16))) float rx_FFT[RX_BUFFER_LEN * 2]; // Will be complex
-
-
 __attribute__((aligned(16))) float prev_rx_FFT[2 * FFT_MOD_SIZE]; // Needed for instantaneous angle calc
 __attribute__((aligned(16))) float rx_FFT_mag[FFT_MOD_SIZE]; // Needed for peak shifting
 __attribute__((aligned(16))) float run_phase_comp[2 * FFT_MOD_SIZE]; // Cumulative phase compensation buffer
@@ -61,28 +59,6 @@ static SemaphoreHandle_t RxBufMutex;
 #define TX_TASK_STACK_SIZE (4096u) // Check watermark!
 #define TX_TASK_CORE (1)
 #define TX_TASK_PRIORITY (10U) // Higher due to it being blocked
-
-/**
- * @brief Callback for TX send completion. Will send notification to I2S
- * transmit task to push data.
- * 
- * @param handle I2S channel handle (TX in this case)
- * @param event Event data
- * @param user_ctx User data
- * @return IRAM_ATTR False
- */
-static IRAM_ATTR bool tx_sent_callback(i2s_chan_handle_t handle, i2s_event_data_t *event, void *user_ctx)
-{
-    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-
-    // Set task notification for filler task to continue
-    configASSERT( xTxTaskHandle != NULL );
-    vTaskNotifyGiveFromISR(xTxTaskHandle, &xHigherPriorityTaskWoken);
-
-    portYIELD_FROM_ISR( xHigherPriorityTaskWoken );
-
-    return false; // FIXME what does this boolean indicate? Docs not clear
-}
 
 /**
  * @brief Callback for RX received event. Will send notification
@@ -137,12 +113,12 @@ void i2s_receive(void* pvParameters)
         size_t data_received = 0;
 
         // Wait for sent notification
-        (void) ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        (void) ulTaskNotifyTake(pdTRUE, 1000 / portTICK_PERIOD_MS);
 
         // Read from I2S buffer
-        i2s_channel_read(rx_handle, stream_data, HOP_BUFFER_SIZE_B, &data_received, 500 / portTICK_PERIOD_MS);
-        if (data_received != HOP_BUFFER_SIZE_B) {
-            ESP_LOGE(TAG, "Only read %d out of %d bytes from I2S buffer", data_received, HOP_BUFFER_SIZE_B);
+        i2s_channel_read(rx_handle, stream_data, sizeof(rxBuffer), &data_received, 500 / portTICK_PERIOD_MS);
+        if (data_received != sizeof(rxBuffer)) {
+            ESP_LOGE(TAG, "Only read %d out of %d bytes from I2S buffer", data_received, sizeof(rxBuffer));
             if (data_received == 0) continue;
         }
         else
@@ -168,6 +144,9 @@ void i2s_transmit(void* pvParameters)
     static const char *TAG = "I2S transmit";
 
     configASSERT( tx_handle != NULL );
+
+    // Zero-out stream data
+    memset(txBuffer, 0, sizeof(txBuffer));
     
     // Enable TX channel
     ESP_ERROR_CHECK(i2s_channel_enable(tx_handle));
@@ -179,12 +158,10 @@ void i2s_transmit(void* pvParameters)
 
         // Write to I2S buffer
         // No error check here to allow for partial writes
-        i2s_channel_write(tx_handle, stream_data, HOP_BUFFER_SIZE_B, &data_written, 300 / portTICK_PERIOD_MS);
-        if (data_written != HOP_BUFFER_SIZE_B) {
-            ESP_LOGE(TAG, "Only wrote %d out of %d bytes to I2S buffer", data_written, HOP_BUFFER_SIZE_B);
+        i2s_channel_write(tx_handle, stream_data, sizeof(txBuffer), &data_written, 300 / portTICK_PERIOD_MS);
+        if (data_written != sizeof(txBuffer)) {
+            ESP_LOGE(TAG, "Only wrote %d out of %d bytes to I2S buffer", data_written, sizeof(txBuffer));
         }
-
-        (void) ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     }
 }
 
@@ -201,7 +178,7 @@ void app_main(void)
     i2s_event_callbacks_t cbs = {
         .on_recv = rx_rcvd_callback,
         .on_recv_q_ovf = rx_rcvd_overflow,
-        .on_sent = tx_sent_callback,
+        .on_sent = NULL,
         .on_send_q_ovf = NULL,
     };
     ESP_ERROR_CHECK(i2s_channel_register_event_callback(rx_handle, &cbs, NULL));
@@ -212,7 +189,6 @@ void app_main(void)
 
     // Set peak shift algorithm config
     peak_shift_cfg_t cfg = {
-        .num_samples = N,
         .hop_size    = HOP_SIZE,
         .bin_freq_step = 1.0 * I2S_SAMPLING_FREQ_HZ / N_SAMPLES,
         .fft_ptr = rx_FFT,
@@ -290,6 +266,8 @@ void app_main(void)
         // Calculate FFT, profile cycle count
         unsigned int start_b = dsp_get_cpu_cycle_count();
         ESP_ERROR_CHECK(calc_fft(rx_FFT, RX_BUFFER_LEN));
+        // Calculate magnitude
+        calc_fft_mag_db(rx_FFT, rx_FFT_mag, FFT_MOD_SIZE);
         unsigned int end_b = dsp_get_cpu_cycle_count();
         float fft_comp_time_ms = (float)(end_b - start_b)/240e3;
 
