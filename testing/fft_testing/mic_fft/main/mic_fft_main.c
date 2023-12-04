@@ -40,15 +40,18 @@ i2s_chan_handle_t rx_handle, tx_handle;
 #define BYTES_PER_SAMPLE (4) // According to spec, 32bits/word
 #define RX_BUFFER_LEN (N_SAMPLES) // Needs to be power of 2 for DSP lib
 static int rxBuffer[RX_BUFFER_LEN * 2]; // x2 for L + R channels
-static int txBuffer[RX_BUFFER_LEN * 2]; // x2 for L + R channels
+static int txBuffer[100];
 static unsigned int rx_ovfl_hit = 0;
 static unsigned int full_data_rcvd = 0;
 
 // FFT buffers
+#define CEPSTRUM_LEN (N_SAMPLES)
 __attribute__((aligned(16))) float rx_FFT[RX_BUFFER_LEN * 2]; // Will be complex
+
 __attribute__((aligned(16))) float prev_rx_FFT[2 * FFT_MOD_SIZE]; // Needed for instantaneous angle calc
 __attribute__((aligned(16))) float rx_FFT_mag[FFT_MOD_SIZE]; // Needed for peak shifting
 __attribute__((aligned(16))) float run_phase_comp[2 * FFT_MOD_SIZE]; // Cumulative phase compensation buffer
+__attribute__((aligned(16))) float rx_env[FFT_MOD_SIZE];
 
 // RX task attributes
 static TaskHandle_t xRxTaskHandle, xTxTaskHandle;
@@ -103,9 +106,6 @@ void i2s_receive(void* pvParameters)
 
     int* stream_data = (int *)pvParameters;
 
-    configASSERT( rx_handle != NULL );
-    configASSERT( stream_data != NULL );
-
     // Enable RX channel
     ESP_ERROR_CHECK(i2s_channel_enable(rx_handle));
 
@@ -127,7 +127,7 @@ void i2s_receive(void* pvParameters)
         }
 
         // Get semaphore
-        if (xSemaphoreTake(RxBufMutex, 500 / portMAX_DELAY) != pdTRUE) {
+        if (xSemaphoreTake(RxBufMutex, 500 / portTICK_PERIOD_MS) != pdTRUE) {
             ESP_LOGE(TAG, "Failed to get mic buffer mutex");
         }
         // Copy buffer into rxBuffer
@@ -173,6 +173,8 @@ void app_main(void)
     es_i2s_init(&tx_handle, &rx_handle, I2S_SAMPLING_FREQ_HZ);
     // Set ADC volume to 0 dB for full sensitivity
     es8388_set_adc_dac_volume(ES_MODULE_ADC, 0, 0);
+    // Set DAC volume to minimum (-96) to effectively mute
+    es8388_set_adc_dac_volume(ES_MODULE_DAC, -96, 0);
 
     // Instantiate I2S callbacks
     i2s_event_callbacks_t cbs = {
@@ -218,6 +220,7 @@ void app_main(void)
     );
 
     // Create TX task
+    memset(txBuffer, 0, sizeof(txBuffer));
     xReturned |= xTaskCreatePinnedToCore(
         i2s_transmit, 
         "I2S Transmit Task",
@@ -249,7 +252,7 @@ void app_main(void)
             return;
         }
 
-        // Fill FFT buff with last sample
+        // Fill FFT buffs with last sample
         for (int i = 0; i < RX_BUFFER_LEN; i++) {
             // Cast to signed int
             // Skip every other, as it should only be L channel with data
@@ -266,22 +269,28 @@ void app_main(void)
         // Calculate FFT, profile cycle count
         unsigned int start_b = dsp_get_cpu_cycle_count();
         ESP_ERROR_CHECK(calc_fft(rx_FFT, RX_BUFFER_LEN));
-        // Calculate magnitude
         calc_fft_mag_db(rx_FFT, rx_FFT_mag, FFT_MOD_SIZE);
+        // Convert to pure log by dividing all entries by 10
+        dsps_mulc_f32(rx_FFT_mag, rx_FFT_mag, FFT_MOD_SIZE, 0.1, 1, 1);
+        // Calculate cepstrum
+        calc_true_envelope(rx_FFT_mag, rx_env, rx_FFT, I2S_SAMPLING_FREQ_HZ);
+        // Convert to dB
+        dsps_mulc_f32(rx_FFT_mag, rx_FFT_mag, FFT_MOD_SIZE, 10, 1, 1);
+        dsps_mulc_f32(rx_env, rx_env, FFT_MOD_SIZE, 10, 1, 1);
+
         unsigned int end_b = dsp_get_cpu_cycle_count();
         float fft_comp_time_ms = (float)(end_b - start_b)/240e3;
+
 
         // Find local peaks
         find_local_peaks();
         
         // Show results
-        ESP_LOGE(TAG, "\n\nMic spectra magnitude (dB)");
-        for (int i = 0; i < N/4; i += PLOT_LEN)
-        {
-            ESP_LOGI(TAG, "%d - %d Hz", i * 10, (PLOT_LEN - 1 + i) * 10);
-            dsps_view(&rx_FFT_mag[i], PLOT_LEN, 128, 10, 0, 30, 'x');
-        }
-        ESP_LOGI(TAG, "FFT for %i complex points take %i cycles (%.3f ms)", RX_BUFFER_LEN, end_b - start_b, fft_comp_time_ms);
+        ESP_LOGW(TAG, "\nMic spectra magnitude (dB)");
+        dsps_view(rx_FFT_mag, 256, 128, 10, 40, 90, 'x');
+        ESP_LOGW(TAG, "Mic cepstrum (dB)");
+        dsps_view(rx_env, 256, 128, 10, 40, 90, 'o');
+        ESP_LOGI(TAG, "Calc for envelope took %i cycles (%.3f ms)", end_b - start_b, fft_comp_time_ms);
         ESP_LOGI(TAG, "RX overflow count = %d, all data received count = %d", rx_ovfl_hit, full_data_rcvd);
         // Print local peaks
         print_local_peaks();
