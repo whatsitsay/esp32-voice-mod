@@ -20,9 +20,6 @@
 #define MAX_PRINT_PEAKS (5) // To prevent overloading
 #define BAND_DIV_NBINS (16) // Number of bins for each 'band' when calculating peaks
 
-#define SET_ARR_BIT(arr, idx, val) (arr[idx/8] |= ((val) ? 1 : 0) << (idx % 8))
-#define GET_ARR_BIT(arr, idx)      ((arr[idx/8] >> (idx % 8)) & 0x1)
-
 typedef struct {
   int hop_size;               // Hop size of analysis
   float bin_freq_step;        // Frequency increment per bin of FFT array (sampling freq/N)
@@ -76,6 +73,16 @@ int find_local_peaks(void);
  * 
  */
 void print_local_peaks(void);
+
+/**
+ * @brief Estimate the fundamental frequency from the peak array
+ * 
+ * Estimated as the max difference (in Hz) between two peaks
+ * Peaks should be found *first*
+ * 
+ * @return float - Fundamental frequency, or -1 if error
+ */
+float est_fundamental_freq(void);
 
 
 /**

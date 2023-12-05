@@ -20,6 +20,7 @@
 #include <es8388.h>
 #include <algo_common.h>
 #include <peak_shift.h>
+#include <filters.h>
 
 // Plot macros
 #define PLOT_LEN (128)
@@ -45,7 +46,6 @@ static unsigned int rx_ovfl_hit = 0;
 static unsigned int full_data_rcvd = 0;
 
 // FFT buffers
-#define CEPSTRUM_LEN (N_SAMPLES)
 __attribute__((aligned(16))) float rx_FFT[RX_BUFFER_LEN * 2]; // Will be complex
 
 __attribute__((aligned(16))) float prev_rx_FFT[2 * FFT_MOD_SIZE]; // Needed for instantaneous angle calc
@@ -203,6 +203,10 @@ void app_main(void)
     // Reset phase compensation buffer
     reset_phase_comp_arr(run_phase_comp);
 
+    // Set true envelope calculation config
+    // Use rx_FFT as buffer for both FFT and cepstrum (half the size)
+    config_true_env_calc(rx_FFT, rx_FFT + N_SAMPLES, I2S_SAMPLING_FREQ_HZ);
+
     // Create mutex for debug buffers
     RxBufMutex = xSemaphoreCreateMutex();
 
@@ -269,21 +273,23 @@ void app_main(void)
         // Calculate FFT, profile cycle count
         unsigned int start_b = dsp_get_cpu_cycle_count();
         ESP_ERROR_CHECK(calc_fft(rx_FFT, RX_BUFFER_LEN));
+        // Calculate magnitude
         calc_fft_mag_db(rx_FFT, rx_FFT_mag, FFT_MOD_SIZE);
-        // Convert to pure log by dividing all entries by 10
+        // Find local peaks
+        find_local_peaks();
+        // Convert mag to pure log by dividing all entries by 10
         dsps_mulc_f32(rx_FFT_mag, rx_FFT_mag, FFT_MOD_SIZE, 0.1, 1, 1);
+
+        // Get fundamental frequency estimate from peak shifter module
+        float fundamental_freq_est = est_fundamental_freq();
         // Calculate cepstrum
-        calc_true_envelope(rx_FFT_mag, rx_env, rx_FFT, I2S_SAMPLING_FREQ_HZ);
+        calc_true_envelope(rx_FFT_mag, rx_env, 100);
         // Convert to dB
         dsps_mulc_f32(rx_FFT_mag, rx_FFT_mag, FFT_MOD_SIZE, 10, 1, 1);
         dsps_mulc_f32(rx_env, rx_env, FFT_MOD_SIZE, 10, 1, 1);
 
         unsigned int end_b = dsp_get_cpu_cycle_count();
         float fft_comp_time_ms = (float)(end_b - start_b)/240e3;
-
-
-        // Find local peaks
-        find_local_peaks();
         
         // Show results
         ESP_LOGW(TAG, "\nMic spectra magnitude (dB)");

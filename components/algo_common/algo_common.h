@@ -18,8 +18,9 @@
 #define N_SAMPLES (4096) // Number of samples for FFT operations
 #define FFT_MOD_SIZE (N_SAMPLES/2 + 1) // Number of samples for modification, ie up to Nyquist
 
-#define CEPSTRUM_CUTOFF_FREQ_HZ (292) // TODO am I interpreting the cepstral order correctly?
-#define TRUE_ENV_NUM_ITERATIONS (3)   // Should be close enough
+// Useful for flag arrays
+#define SET_ARR_BIT(arr, idx, val) (arr[(idx)/8] |= ((val) ? 1 : 0) << ((idx) % 8))
+#define GET_ARR_BIT(arr, idx)      ((arr[(idx)/8] >> ((idx) % 8)) & 0x1)
 
 /**
  * @brief Calculate FFT from signal data
@@ -65,29 +66,6 @@ esp_err_t inv_fft(float* fft_arr, int num_samples);
  * @return float - Maximum magnitude of samples (in dB)
  */
 float calc_fft_mag_db(float* fft_arr, float* fft_mag, int num_samples);
-
-/**
- * @brief Perform cepstral smoothing on spectrum
- * 
- * @param fft_mag_log - Magnitude of FFT, represented in log
- * @param cepstrum_ptr - Output buffer for cepstrum values
- * @param fft_buff - Memory buffer for performing FFT (size >= 2xnum_samples)
- * @param num_samples - size of FFT used, cepstrum will be half this + 1
- * @param sampling_freq_hz - Sampling frequency
- */
-void calc_cepstrum(float* fft_mag_log, float* cepstrum_ptr, float* fft_buff, int num_samples, float sampling_freq_hz);
-
-/**
- * @brief Calculate true envelope using a subsampled signal array
- * 
- * Will upsample and interpolate envelope to match FFT spectrum length
- * 
- * @param mag_log_ptr - Pointer to log magnitude array
- * @param env_ptr - Envelope pointer
- * @param fft_ptr - FFT buffer for envelope
- * @param sampling_freq_hz - Sampling frequency in Hz
- */
-void calc_true_envelope(float* mag_log_ptr, float* env_ptr, float* fft_ptr, float sampling_freq_hz);
 
 /**
  * @brief Calculate the FFT phase at the given index
@@ -169,5 +147,18 @@ float get_euler_coeff(int angle_idx, bool imag_comp);
  * @return float - Value of window at index
  */
 float get_window(int idx);
+
+/**
+ * @brief Interpolate x between x_1 and x_0
+ * 
+ * Can also be used to extrapolate if x > x_1 (identical equation)
+ * 
+ * @param x - Desired interpolation point
+ * @param x_1 - Upper bound of interpolation 
+ * @param x_0 - Lower bound of interpolation
+ * @param y_arr - Second coordinate for interpolation result
+ * @return float - Interpolated/extrapolated Y value
+ */
+float interpolate_val(int x, int x_1, int x_0, float* y_arr);
 
 #endif // __ALGO_COMMON_H__

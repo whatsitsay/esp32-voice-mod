@@ -24,6 +24,7 @@ static peak_shift_cfg_t* peak_shift_cfg;
 
 // Counter and flag arrays
 static unsigned _num_peaks = 0;
+static float _fundamental_freq = -1;
 static uint8_t _peak_flag_arr[(FFT_MOD_SIZE / 8) + 1];
 static float _inst_freq_arr[FFT_MOD_SIZE];
 
@@ -46,11 +47,16 @@ void reset_phase_comp_arr(float* run_phase_comp_ptr)
 
 int find_local_peaks(void)
 {
-  // Reset peak counter and flags
+  // Reset counters and flags
   _num_peaks = 0;
+  _fundamental_freq = -1;
   memset(_peak_flag_arr, 0, sizeof(_peak_flag_arr));
 
   float* mag_arr = peak_shift_cfg->fft_mag_ptr;
+
+  // track last peak index and running peak difference
+  int max_peak_diff = 0;
+  int last_peak_idx = -1;
 
   // Iterate over magnitude array for indicies within bounds of peak detection,
   // taking into acount comparisons with previous/next neighbors
@@ -100,17 +106,31 @@ int find_local_peaks(void)
 
       // Increment peak counter
       _num_peaks++;
+
+      // Check if fundamental frequency
+      // Skip check if last idx not yet set
+      if (last_peak_idx != -1) max_peak_diff = MAX(max_peak_diff, i - last_peak_idx);
+      // Store last peak index
+      last_peak_idx = i;
     }
   }
 
-  // // Return number of peaks
+  // Calculate fundamental frequency from maximum peak difference
+  _fundamental_freq = max_peak_diff * peak_shift_cfg->bin_freq_step;
+
+  // Return number of peaks
   return _num_peaks;
 }
 
 void print_local_peaks(void)
 {
-  ESP_LOGW(TAG, "%d peaks detected", _num_peaks);
-  // TODO: maybe have some way to display peak indicies
+  ESP_LOGW(TAG, "%d peaks detected, fundamental frequency ~%.2f Hz",
+           _num_peaks, _fundamental_freq);
+}
+
+float est_fundamental_freq(void)
+{
+  return _fundamental_freq;
 }
 
 void shift_peaks(float shift_factor, float shift_gain, float* run_phase_comp_ptr)

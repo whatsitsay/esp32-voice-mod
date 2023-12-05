@@ -8279,81 +8279,6 @@ float calc_fft_mag_db(float* fft_arr, float* fft_mag, int num_samples)
   return max_mag_db;
 }
 
-void calc_cepstrum(float* fft_mag_log, float* cepstrum_ptr, float* fft_buff, int num_samples, float sampling_freq_hz)
-{
-  // First fill FFT with log magnitude
-  for (int i = 0; i <= num_samples / 2; i++) {
-    fft_buff[2 * i] = fft_mag_log[i]; // Real component is log magnitude
-    fft_buff[2 * i + 1] = 0; // Zero imag (no phase)
-
-    // Mirror values except for first and Nyquist
-    if (i > 0 && i < num_samples / 2) {
-      fft_buff[2 * (num_samples - i)] = fft_buff[2 * i]; // Same real
-      fft_buff[2 * (num_samples - i) + 1] = 0; // Zero imag (no phase)
-    }
-  }
-
-  // Take FFT
-  inv_fft(fft_buff, num_samples);
-
-  // Window for cutoff frequency using simple low-pass filter
-  int cutoff_idx = CEPSTRUM_CUTOFF_FREQ_HZ * (num_samples / (float)sampling_freq_hz);
-  // Halve value at cutoff frequency itself
-  // Divided by sqrt of 2 due to amplitude calc
-  fft_buff[2 *cutoff_idx] *= 0.5 / sqrt(2);
-  fft_buff[2 *cutoff_idx + 1] *= 0.5 / sqrt(2);
-  // Zero out everything after
-  int lpf_zero_start = cutoff_idx + 1;
-  int lpf_zero_size  = num_samples - lpf_zero_start;
-  memset(fft_buff + 2*lpf_zero_start, 0, 2 * lpf_zero_size * sizeof(float));
-
-  // Take FFT
-  calc_fft(fft_buff, num_samples);
-
-  // Fill cepstrum array with real values only
-  for (int i = 0; i <= num_samples / 2; i++) {
-    cepstrum_ptr[i] = fft_buff[2 * i];
-  }
-}
-
-void calc_true_envelope(float* mag_log_ptr, float* env_ptr, float* fft_ptr, float sampling_freq_hz)
-{
-  int cepstrum_len = N_SAMPLES / 2;
-  int env_len = cepstrum_len / 2 + 1; // Only up to Nyquist
-  float* cepstrum_buff = (float *)malloc(env_len * sizeof(float));
-  configASSERT( cepstrum_buff != NULL );
-
-  // Start by subsampling by using max of each 2
-  // NOTE: this is based on rough interpretation of the "efficient true envelope" paper, but may not be accurate
-  for (int i = 0; i < env_len; i++) {
-    env_ptr[i] = MAX(mag_log_ptr[2*i], mag_log_ptr[2*i + 1]);
-  }
-
-  // Iterate a finite amount of times to fine-tune envelope
-  for (int j = 0; j < TRUE_ENV_NUM_ITERATIONS; j++) {
-    // Calculate cepstrum
-    calc_cepstrum(env_ptr, cepstrum_buff, fft_ptr, cepstrum_len, sampling_freq_hz);
-
-    // Reselect env values based on max of cepstrum and last envelope
-    for (int i = 0; i < env_len; i++) {
-      env_ptr[i] = MAX(env_ptr[i], cepstrum_buff[i]);
-    }
-  }
-
-  // Store current envelope into cepstrum buff for upsampling/interpolation
-  memcpy(cepstrum_buff, env_ptr, env_len * sizeof(float));
-
-  // Expand and fill envelope with interpolated values. Just use linear interpolation for now
-  for (int i = 0; i < FFT_MOD_SIZE; i ++) {
-    int downsample_idx = i / 2;
-    env_ptr[i] = (i % 2) ? 0.5 * (cepstrum_buff[downsample_idx] + cepstrum_buff[downsample_idx + 1]) : // Average between points
-                           cepstrum_buff[downsample_idx]; // Use point itself
-  }
-
-  // Free memory
-  free(cepstrum_buff);
-}
-
 float get_idx_phase(float* fft_arr, int idx)
 {
   // Assumes FFT is in the format arr[2 * N] with odd samples being real, and even imaginary
@@ -8407,4 +8332,11 @@ float get_window(int idx)
   configASSERT( idx < N_SAMPLES );
 
   return ROOT_HANN_WIN_LUT[idx];
+}
+
+float interpolate_val(int x, int x_1, int x_0, float* y_arr)
+{
+  // Formula for interpolation is:
+  // Y(x) = Y(x_0)+(x-x_0)/(x_1-x_0)*(Y(x_1)-Y(x_0))
+  return y_arr[x_0] + ((y_arr[x_1] - y_arr[x_0])/(x_1 - x_0))*(x - x_0);
 }
