@@ -17,6 +17,7 @@
 
 #define N_SAMPLES (4096) // Number of samples for FFT operations
 #define FFT_MOD_SIZE (N_SAMPLES/2 + 1) // Number of samples for modification, ie up to Nyquist
+#define I2S_VOLTAGE_CONV (3.576279113e-7) // 3.0 V / max I2S (1 << 23 - 1)
 
 // Useful for flag arrays
 #define SET_ARR_BIT(arr, idx, val) (arr[(idx)/8] |= ((val) ? 1 : 0) << ((idx) % 8))

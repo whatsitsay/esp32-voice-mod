@@ -16,6 +16,7 @@
 #include <inttypes.h>
 #include "sdkconfig.h"
 #include "esp_err.h"
+#include "esp_dsp.h"
 #include "freertos/FreeRTOS.h"
 #include "filters.h"
 #include <algo_common.h>
@@ -29,37 +30,40 @@ static uint8_t _subsample_flags[(FFT_MOD_SIZE / 8) + 1];
 void config_true_env_calc(float* fft_buff, float* cepstrum_buff, float sampling_freq_hz)
 {
   _fft_buff      = fft_buff;
-  _cepstrum_buff = cepstrum_buff;
   _sampling_freq = sampling_freq_hz;
+  _cepstrum_buff = (cepstrum_buff == NULL) ? (float *)calloc(CEPSTRUM_MOD_SIZE, sizeof(float)) : cepstrum_buff;
+  configASSERT( _cepstrum_buff != NULL );
 }
 
 void calc_cepstrum(float* mag_log_ptr, float* cepstrum_ptr, float cutoff_freq)
 {
   // First fill FFT with log magnitude
   for (int i = 0; i <= CEPSTRUM_LEN / 2; i++) {
-    _fft_buff[2 * i] = mag_log_ptr[i]; // Real component is log magnitude
+    volatile float mag_val = mag_log_ptr[i];
+    _fft_buff[2 * i] = mag_val; // Real component is log magnitude
     _fft_buff[2 * i + 1] = 0; // Zero imag (no phase)
-
-    // Mirror values except for first and Nyquist
-    if (i > 0 && i < CEPSTRUM_LEN / 2) {
-      _fft_buff[2 * (CEPSTRUM_LEN - i)] = _fft_buff[2 * i]; // Same real
-      _fft_buff[2 * (CEPSTRUM_LEN - i) + 1] = 0; // Zero imag (no phase)
-    }
   }
 
-  // Take FFT
+  // Mirror FFT
+  fill_mirror_fft(_fft_buff, CEPSTRUM_LEN);
+
+  // Take IFFT
   inv_fft(_fft_buff, CEPSTRUM_LEN);
+  // Zero out imaginary components
+  dsps_mulc_f32(_fft_buff+1, _fft_buff+1, CEPSTRUM_LEN, 0, 2, 2);
 
   // Window for cutoff frequency using simple low-pass filter
-  int cutoff_idx = cutoff_freq * (CEPSTRUM_LEN / _sampling_freq);
+  volatile int cutoff_idx = (int)roundf(2 * cutoff_freq * (CEPSTRUM_LEN / (float)_sampling_freq));
   // Halve value at cutoff frequency itself
   // Divided by sqrt of 2 due to amplitude calc
-  _fft_buff[2 *cutoff_idx] *= 0.5 / sqrt(2);
-  _fft_buff[2 *cutoff_idx + 1] *= 0.5 / sqrt(2);
-  // Zero out everything after
+  _fft_buff[2 * cutoff_idx] *= 0.5 * M_SQRT1_2;
+  // Apply low-pass filter by setting all higher frequencies to zero
   int lpf_zero_start = cutoff_idx + 1;
-  int lpf_zero_size  = CEPSTRUM_LEN - lpf_zero_start;
+  int lpf_zero_size  = CEPSTRUM_MOD_SIZE - lpf_zero_start; // Up to Nyquist
   memset(_fft_buff + 2*lpf_zero_start, 0, 2 * lpf_zero_size * sizeof(float));
+
+  // Fill mirror
+  fill_mirror_fft(_fft_buff, CEPSTRUM_LEN);
 
   // Take FFT
   calc_fft(_fft_buff, CEPSTRUM_LEN);
@@ -96,17 +100,15 @@ void calc_true_envelope(float* mag_log_ptr, float* env_ptr, float cutoff_freq)
 
   // Iterate a finite amount of times to fine-tune envelope
   for (int j = 0; j < TRUE_ENV_NUM_ITERATIONS; j++) {
-    // Calculate cepstrum
-    calc_cepstrum(env_ptr, _cepstrum_buff, cutoff_freq);
-
-    // Reselect env values based on max of cepstrum and last envelope
+    // Reselect env values based on max of cepstrum and original log spectrum
+    // If first iteration, use envelope as-is
     for (int i = 0; i < CEPSTRUM_MOD_SIZE; i++) {
-      env_ptr[i] = MAX(env_ptr[i], _cepstrum_buff[i]);
+      _cepstrum_buff[i] = (j > 0) ? MAX(env_ptr[i], _cepstrum_buff[i]) : env_ptr[i];
     }
-  }
 
-  // Calc cepstrum one last time, this will be the envelope
-  calc_cepstrum(env_ptr, _cepstrum_buff, cutoff_freq);
+    // Calculate cepstrum
+    calc_cepstrum(_cepstrum_buff, _cepstrum_buff, cutoff_freq);
+  }
 
   // Iterate through envelope, inserting values at their selected indicies
   for (int i = 0; i < FFT_MOD_SIZE; i ++) {

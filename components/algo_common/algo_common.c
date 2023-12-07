@@ -8246,7 +8246,7 @@ esp_err_t inv_fft(float* fft_arr, int num_samples)
     // Perform FFT on conjugate of original FFT
     // Invert all imaginary values by multiplying by -1
     // This entails all odd entries
-    dsps_mulc_f32(fft_arr+1, fft_arr+1, num_samples * 2-1, -1, 2, 2);
+    dsps_mulc_f32(fft_arr+1, fft_arr+1, num_samples, -1, 2, 2);
 
     // Calc FFT from conjugate-mirrored data
     esp_err_t resp = calc_fft(fft_arr, num_samples);
@@ -8256,7 +8256,7 @@ esp_err_t inv_fft(float* fft_arr, int num_samples)
     float corr_factor = 1.0 / (float)num_samples;
     dsps_mulc_f32(fft_arr, fft_arr, 2 * num_samples, corr_factor, 1, 1);
     // Then get conjugate again by multiplying all imaginary components by -1
-    dsps_mulc_f32(fft_arr+1, fft_arr+1, num_samples * 2-1, -1, 2, 2);
+    dsps_mulc_f32(fft_arr+1, fft_arr+1, num_samples, -1, 2, 2);
 
     return resp;
 }

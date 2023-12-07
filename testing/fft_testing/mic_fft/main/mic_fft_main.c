@@ -261,6 +261,8 @@ void app_main(void)
             // Cast to signed int
             // Skip every other, as it should only be L channel with data
             float rx_f = (float)(rxBuffer[2 * i] >> I2S_DOWNSHIFT);
+            // Convert to voltage
+            rx_f *= I2S_VOLTAGE_CONV;
             
             // Dot-multiply with Hann windows to reduce effect of edges
             rx_FFT[2 * i] = rx_f * get_window(i);
@@ -281,9 +283,9 @@ void app_main(void)
         dsps_mulc_f32(rx_FFT_mag, rx_FFT_mag, FFT_MOD_SIZE, 0.1, 1, 1);
 
         // Get fundamental frequency estimate from peak shifter module
-        float fundamental_freq_est = est_fundamental_freq();
+        volatile float fundamental_freq_est = est_fundamental_freq();
         // Calculate cepstrum
-        calc_true_envelope(rx_FFT_mag, rx_env, 100);
+        calc_true_envelope(rx_FFT_mag, rx_env, 440);
         // Convert to dB
         dsps_mulc_f32(rx_FFT_mag, rx_FFT_mag, FFT_MOD_SIZE, 10, 1, 1);
         dsps_mulc_f32(rx_env, rx_env, FFT_MOD_SIZE, 10, 1, 1);
@@ -293,9 +295,9 @@ void app_main(void)
         
         // Show results
         ESP_LOGW(TAG, "\nMic spectra magnitude (dB)");
-        dsps_view(rx_FFT_mag, 256, 128, 10, 40, 90, 'x');
+        dsps_view(rx_FFT_mag, 1024, 128, 10, -20, 30, 'x');
         ESP_LOGW(TAG, "Mic cepstrum (dB)");
-        dsps_view(rx_env, 256, 128, 10, 40, 90, 'o');
+        dsps_view(rx_env, 1024, 128, 10, -20, 30, 'o');
         ESP_LOGI(TAG, "Calc for envelope took %i cycles (%.3f ms)", end_b - start_b, fft_comp_time_ms);
         ESP_LOGI(TAG, "RX overflow count = %d, all data received count = %d", rx_ovfl_hit, full_data_rcvd);
         // Print local peaks
