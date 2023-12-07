@@ -55,8 +55,7 @@ void calc_cepstrum(float* mag_log_ptr, float* cepstrum_ptr, float cutoff_freq)
   // Window for cutoff frequency using simple low-pass filter
   volatile int cutoff_idx = (int)roundf(2 * cutoff_freq * (CEPSTRUM_LEN / (float)_sampling_freq));
   // Halve value at cutoff frequency itself
-  // Divided by sqrt of 2 due to amplitude calc
-  _fft_buff[2 * cutoff_idx] *= 0.5 * M_SQRT1_2;
+  _fft_buff[2 * cutoff_idx] *= 0.5;
   // Apply low-pass filter by setting all higher frequencies to zero
   int lpf_zero_start = cutoff_idx + 1;
   int lpf_zero_size  = CEPSTRUM_MOD_SIZE - lpf_zero_start; // Up to Nyquist
