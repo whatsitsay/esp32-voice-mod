@@ -1,7 +1,7 @@
 #ifndef __FILTERS_H__
 #define __FILTERS_H__
 
-#define TRUE_ENV_NUM_ITERATIONS (4)   // Should be close enough for near convergence
+#define TRUE_ENV_NUM_ITERATIONS (3)   // Should be close enough for near convergence
 #define CEPSTRUM_LEN            (N_SAMPLES / 2) // Half size for lower footprint and quicker calculations
 #define CEPSTRUM_MOD_SIZE       (CEPSTRUM_LEN / 2 + 1) // Half again for magnitude
 

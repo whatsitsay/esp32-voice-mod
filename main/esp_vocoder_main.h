@@ -52,9 +52,16 @@ __attribute__((aligned(16))) float prev_rx_FFT[FFT_MOD_SIZE * 2]; // For inst fr
 // Peak shift buffers
 float rx_FFT_mag[FFT_MOD_SIZE]; // Needed for peak shifting
 float run_phase_comp[2 * FFT_MOD_SIZE]; // Cumulative phase compensation buffer
+// True envelope buffers
+// Use tx_iFFT to save memory for envelope FFT/cepstrum buffers
+float* env_FFT = tx_iFFT;
+float* cepstrum_buff = tx_iFFT + N_SAMPLES;
+// Allocate envelope buffer
+float rx_env[FFT_MOD_SIZE];
+float rx_env_inv[FFT_MOD_SIZE]; // Inverse for ratio calc
 
-#define NOISE_THRESHOLD_DB (28) // Empirical
-#define SILENCE_RESET_COUNT (10) // ~every half second
+#define NOISE_THRESHOLD_DB (7) // Empirical
+#define SILENCE_RESET_COUNT (5) // ~every quarter second
 
 // Ping-pong buffers
 #define NUM_BUFFERS (2)
@@ -79,7 +86,7 @@ TaskHandle_t  xTaskStatsHandle;
 TaskHandle_t  xModeSwitchTaskHandle;
 // Stack sizes based empirically on high watermarks, with a little extra room just in case
 // Should be revisited if changes are made
-#define DSP_TASK_STACK_SIZE (16384u) // Watermark: 14368
+#define DSP_TASK_STACK_SIZE (15000u) // Watermark: 14368
 #define DSP_TASK_CORE (0)
 #define RX_TASK_STACK_SIZE (3500u) // Watermark: 3464
 #define RX_TASK_CORE (1)
@@ -129,9 +136,9 @@ static const float PITCH_SHIFT_GAINS[] = {
   0.8, // Minor third
 };
 
-#define LOW_EFFECT_SHIFT  (0.75)
+#define LOW_EFFECT_SHIFT  (0.5)
 #define LOW_EFFECT_GAIN   (1.2)
-#define HIGH_EFFECT_SHIFT (1.5)
+#define HIGH_EFFECT_SHIFT (2.0)
 #define HIGH_EFFECT_GAIN  (1.0)
 #define PASSTHROUGH_SHIFT (1.0)
 #define PASSTHROUGH_GAIN  (1.0)

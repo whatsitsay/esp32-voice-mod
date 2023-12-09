@@ -19,6 +19,7 @@
 // Value is empirical, based on testing of sound quality with peak-finding algorithm and calc time
 #define MAX_PRINT_PEAKS (5) // To prevent overloading
 #define BAND_DIV_NBINS (16) // Number of bins for each 'band' when calculating peaks
+#define FUNDAMENTAL_FREQ_MAX_BIN (300) // Maximum bin for estimating the fundamental frequency (empirical)
 
 typedef struct {
   int hop_size;               // Hop size of analysis
@@ -27,6 +28,8 @@ typedef struct {
   float* fft_prev_ptr;        // Pointer to input FFT array of previous frame (size N+2)
   float* fft_mag_ptr;         // Pointer to input FFT magnitude array of current frame (size N/2+1)
   float* fft_out_ptr;         // Pointer to output FFT (size 2*N)
+  float* true_env_ptr;        // Pointer to true envelope buffer (calculated externally)
+  float* inv_env_ptr;         // Pointer to inverse of true envelope (i.e. 1/true_env above)
 } peak_shift_cfg_t;
 
 /**

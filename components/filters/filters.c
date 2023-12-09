@@ -24,23 +24,23 @@
 // Params for true envelope calculation
 static float* _fft_buff;
 static float* _cepstrum_buff;
-static int _sampling_freq;
 static uint8_t _subsample_flags[(FFT_MOD_SIZE / 8) + 1];
+static float _sample_to_hz; // Inverse of bin frequency width
 
 void config_true_env_calc(float* fft_buff, float* cepstrum_buff, float sampling_freq_hz)
 {
   _fft_buff      = fft_buff;
-  _sampling_freq = sampling_freq_hz;
   _cepstrum_buff = (cepstrum_buff == NULL) ? (float *)calloc(CEPSTRUM_MOD_SIZE, sizeof(float)) : cepstrum_buff;
   configASSERT( _cepstrum_buff != NULL );
+  // Calc and store sample to Hz ratio for later
+  _sample_to_hz = CEPSTRUM_LEN / (float)sampling_freq_hz;
 }
 
 void calc_cepstrum(float* mag_log_ptr, float* cepstrum_ptr, float cutoff_freq)
 {
   // First fill FFT with log magnitude
   for (int i = 0; i <= CEPSTRUM_LEN / 2; i++) {
-    volatile float mag_val = mag_log_ptr[i];
-    _fft_buff[2 * i] = mag_val; // Real component is log magnitude
+    _fft_buff[2 * i] = mag_log_ptr[i]; // Real component is log magnitude
     _fft_buff[2 * i + 1] = 0; // Zero imag (no phase)
   }
 
@@ -53,7 +53,7 @@ void calc_cepstrum(float* mag_log_ptr, float* cepstrum_ptr, float cutoff_freq)
   dsps_mulc_f32(_fft_buff+1, _fft_buff+1, CEPSTRUM_LEN, 0, 2, 2);
 
   // Window for cutoff frequency using simple low-pass filter
-  volatile int cutoff_idx = (int)roundf(2 * cutoff_freq * (CEPSTRUM_LEN / (float)_sampling_freq));
+  int cutoff_idx = (int)roundf(2 * cutoff_freq * _sample_to_hz);
   // Halve value at cutoff frequency itself
   _fft_buff[2 * cutoff_idx] *= 0.5;
   // Apply low-pass filter by setting all higher frequencies to zero
@@ -110,12 +110,13 @@ void calc_true_envelope(float* mag_log_ptr, float* env_ptr, float cutoff_freq)
   }
 
   // Iterate through envelope, inserting values at their selected indicies
-  for (int i = 0; i < FFT_MOD_SIZE; i ++) {
+  for (unsigned i = 0; i < FFT_MOD_SIZE; i++) {
     // Check whether actual value was subsampled or neighbor
     bool val_used = GET_ARR_BIT(_subsample_flags, i); 
 
     // If value used, insert current cepstrum magnitude. Otherwise, insert 0 for now
-    env_ptr[i] = (val_used) ? _cepstrum_buff[i / 2] : 0;
+    // Use bitshift down for faster operation of /2
+    env_ptr[i] = (val_used) ? _cepstrum_buff[i >> 1] : 0;
   }
 
   // Iterate again for interpolation/extrapolation of remaining values
@@ -159,7 +160,6 @@ void calc_true_envelope(float* mag_log_ptr, float* env_ptr, float cutoff_freq)
       }
     }
     // Interpolate/extrapolate based on idx0 and idx1
-    volatile float interpolation_val = interpolate_val(i, idx_1, idx_0, env_ptr);
-    env_ptr[i] = interpolation_val;
+    env_ptr[i] = interpolate_val(i, idx_1, idx_0, env_ptr);
   }
 }

@@ -8265,8 +8265,9 @@ float calc_fft_mag_db(float* fft_arr, float* fft_mag, int num_samples)
 {
   float max_mag_db = -INFINITY;
   for (int i = 0; i < num_samples; i++) {
-    float real = fft_arr[2 * i];
-    float imag = fft_arr[2 * i + 1];
+    // Convert from I2S 24-bit data to voltage
+    float real = fft_arr[2 * i] * I2S_VOLTAGE_CONV;
+    float imag = fft_arr[2 * i + 1] * I2S_VOLTAGE_CONV;
 
     float mag_raw = sqrtf((real * real) + (imag * imag));
 
