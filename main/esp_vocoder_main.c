@@ -113,7 +113,9 @@ void audio_data_modification(int* rxBuffer, int* txBuffer) {
 
     switch (vocoder_mode) {
         case MOD_CHORUS: {
-            // Perform full chorus shift
+            // Copy in original sound (save cycles)
+            memcpy(tx_iFFT, rx_FFT, FFT_MOD_SIZE * 2 * sizeof(float));
+            // Perform full chorus shift for the rest
             for (int i = 0; i < NUM_PITCH_SHIFTS; i++) {
                 shift_peaks(PITCH_SHIFT_FACTORS[i], PITCH_SHIFT_GAINS[i], run_phase_comp);
             }

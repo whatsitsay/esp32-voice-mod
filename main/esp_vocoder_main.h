@@ -118,16 +118,16 @@ EventGroupHandle_t xTaskSyncBits;
 SemaphoreHandle_t xModeSwitchMutex;
 
 // Lookup table for pitch shift factors
-#define NUM_PITCH_SHIFTS (4)
+#define NUM_PITCH_SHIFTS (3) // Unity (root) done separately
 // Pitch-shift for minor 7th where original sound is 5th
 static const float PITCH_SHIFT_FACTORS[] = {
-  1.0, // Original sound
+  // 1.0, // Original sound
   0.66667, // Lower Fourth ("Tonic")
   0.8, // Lower 6th flat (Minor third of new tonic, 2/3 * 6/5 = 4/5)
   1.2, // Minor Third (Flat seventh of new tonic)
 };
 static const float PITCH_SHIFT_GAINS[] = {
-  1.0, // Original sound
+  // 1.0, // Original sound
   1.1, // Lower fourth
   1.0, // Lower sixth flat
   0.8, // Minor third
