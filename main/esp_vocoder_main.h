@@ -87,15 +87,15 @@ TaskHandle_t  xModeSwitchTaskHandle;
 // Stack sizes based empirically on high watermarks, with a little extra room just in case
 // Should be revisited if changes are made
 #define DSP_TASK_STACK_SIZE (15000u) // Watermark: 14368
-#define DSP_TASK_CORE (0)
+#define DSP_TASK_CORE (1)
 #define RX_TASK_STACK_SIZE (3500u) // Watermark: 3464
-#define RX_TASK_CORE (1)
+#define RX_TASK_CORE (0)
 #define TX_TASK_STACK_SIZE (3500u) // Watermark: 3456
-#define TX_TASK_CORE (1)
+#define TX_TASK_CORE (0)
 #define TASK_STATS_STACK_SIZE (3000u) // Watermark: 1564, but crashes otherwise
 #define TASK_STATS_CORE (0)
-#define MODE_SWITCH_TASK_CORE (1)
 #define MODE_SWITCH_TASK_STACK_SIZE (800u) // Watermark: 212
+#define MODE_SWITCH_TASK_CORE (0)
 
 #define DSP_TASK_PRIORITY (1U) // Just above idle
 #define TX_TASK_PRIORITY (10U) // Higher due to it being blocked
@@ -115,10 +115,7 @@ EventGroupHandle_t xTaskSyncBits;
 #define SYNC_TIMEOUT_TICKS  (5000 / portTICK_PERIOD_MS) // Raise error if not synced by this point
 
 // Semaphores
-SemaphoreHandle_t xDbgMutex, xModeSwitchMutex;
-
-#define PLOT_LEN (128)
-__attribute__((aligned(16))) float tx_FFT_mag[PLOT_LEN]; // For debug only
+SemaphoreHandle_t xModeSwitchMutex;
 
 // Lookup table for pitch shift factors
 #define NUM_PITCH_SHIFTS (4)
