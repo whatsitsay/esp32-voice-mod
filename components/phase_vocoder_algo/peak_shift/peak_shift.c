@@ -30,10 +30,10 @@ static float _inst_freq_arr[FFT_MOD_SIZE];
 
 // Index correction LUT
 // Enough space to approach asymptotes, plus origin
-static float _index_correction_lut[IDX_CORR_SIZE];
+// static float _index_correction_lut[IDX_CORR_SIZE];
 // Constants for ease-of-access later
-const int IDX_CORR_SIZE_CONST = IDX_CORR_SIZE;
-const int IDX_CORR_FUNDAMENTAL_CONST = IDX_CORR_FUNDAMENTAL;
+// const int IDX_CORR_SIZE_CONST = IDX_CORR_SIZE;
+// const int IDX_CORR_FUNDAMENTAL_CONST = IDX_CORR_FUNDAMENTAL;
 const int NYQUIST_FREQ_IDX = N_SAMPLES / 2;
 
 const char* TAG = "Peak Shift Algorithm";
@@ -43,15 +43,16 @@ void init_peak_shift_cfg(peak_shift_cfg_t* cfg)
   peak_shift_cfg = cfg;
 
   // Initialize index correction lut
-  for (int k = 0; k < IDX_CORR_SIZE; k++)
-  {
-    // As per Roebel/Rodet, the index correction factor is defined as:
-    // 1 - 1/(1 + exp((k - k0)/Tk)), where:
-    // - k is the index
-    // - k0 is the fundamental frequency approx index
-    // - Tk is the transition bandwidth
-    _index_correction_lut[k] = 1/(1 + exp((float)(k - IDX_CORR_FUNDAMENTAL)/TRANSITION_BANDWIDTH));
-  }
+  // TODO: disabled for now until artifacts removed
+  // for (int k = 0; k < IDX_CORR_SIZE; k++)
+  // {
+  //   // As per Roebel/Rodet, the index correction factor is defined as:
+  //   // 1 - 1/(1 + exp((k - k0)/Tk)), where:
+  //   // - k is the index
+  //   // - k0 is the fundamental frequency approx index
+  //   // - Tk is the transition bandwidth
+  //   _index_correction_lut[k] = 1/(1 + exp((float)(k - IDX_CORR_FUNDAMENTAL)/TRANSITION_BANDWIDTH));
+  // }
 }
 
 void reset_phase_comp_arr(float* run_phase_comp_ptr)
@@ -155,19 +156,20 @@ void print_local_peaks(void)
            _num_peaks, est_fundamental_freq());
 }
 
-float _get_true_env_correction(int old_idx, float shift_factor)
+float _get_true_env_correction(int old_idx, int new_idx)
 {
+  // TODO: removed index correction until artifacts can be removed at higher frequencies
   // Calc distance from fundamental
-  volatile int distance_from_fundamental = old_idx - _fundamental_freq_idx;
-  volatile int correction_lut_idx = distance_from_fundamental + IDX_CORR_FUNDAMENTAL_CONST;
-  // Calc index correction factor D(k) using LUT
-  volatile float idx_corr_factor = (correction_lut_idx < 0) ? 1 : // Asymptote for x < fundamental 
-                          (correction_lut_idx >= IDX_CORR_SIZE_CONST) ? 0 : // Asymptote for x > fundamental
-                          _index_correction_lut[correction_lut_idx];
-  // Estimate new index
-  volatile int new_idx = roundf((idx_corr_factor + ((1 - idx_corr_factor) * shift_factor)) * old_idx);
-  // Correct for reflection
-  new_idx = (new_idx < 0) ? -1 * new_idx : (new_idx > NYQUIST_FREQ_IDX) ? NYQUIST_FREQ_IDX - new_idx : new_idx;
+  // volatile int distance_from_fundamental = old_idx - _fundamental_freq_idx;
+  // volatile int correction_lut_idx = distance_from_fundamental + IDX_CORR_FUNDAMENTAL_CONST;
+  // // Calc index correction factor D(k) using LUT
+  // volatile float idx_corr_factor = (correction_lut_idx < 0) ? 1 : // Asymptote for x < fundamental 
+  //                         (correction_lut_idx >= IDX_CORR_SIZE_CONST) ? 0 : // Asymptote for x > fundamental
+  //                         _index_correction_lut[correction_lut_idx];
+  // // Estimate new index
+  // volatile int new_idx = roundf((idx_corr_factor + ((1 - idx_corr_factor) * shift_factor)) * old_idx);
+  // // Correct for reflection
+  // new_idx = (new_idx < 0) ? -1 * new_idx : (new_idx > NYQUIST_FREQ_IDX) ? NYQUIST_FREQ_IDX - new_idx : new_idx;
   return peak_shift_cfg->true_env_ptr[new_idx] * peak_shift_cfg->inv_env_ptr[old_idx];
 }
 
@@ -258,7 +260,7 @@ void shift_peaks(float shift_factor, float shift_gain, float* run_phase_comp_ptr
       if (hit_boundary) prod_fft_imag *= -1;
 
       // Calculate true envelope correction based on peak freq shift
-      float true_env_corr = _get_true_env_correction(orig_idx / 2, shift_factor);
+      float true_env_corr = _get_true_env_correction(orig_idx / 2, new_idx / 2);
 
       // Add to output FFT at new index, now applying shift_gain and true envelope correction
       // to both real and imaginary components
