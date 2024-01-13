@@ -163,8 +163,9 @@ esp_err_t es8388_init( es_dac_output_t output, es_adc_input_t input )
     ESP_LOGW(ES_TAG, "Setting ADC Input: %02x", input );
     res |= es_write_reg(ES8388_ADDR, ES8388_ADCCONTROL2, input);
 
-    res |= es_write_reg(ES8388_ADDR, ES8388_ADCCONTROL3, 0x08); // Mono-mix to ADC left, use LINPUT2
-    res |= es_write_reg(ES8388_ADDR, ES8388_ADCCONTROL4, 0x11); // 32-bit audio, left justify 
+    res |= es_write_reg(ES8388_ADDR, ES8388_ADCCONTROL3, 0x00); // Stereo input, diff LINPUT1-RINPUT1
+    // TODO: revert if stereo mic is ever used instead
+    res |= es_write_reg(ES8388_ADDR, ES8388_ADCCONTROL4, 0x51); // Left ADC both channels, 32-bit audio, left justify 
     res |= es_write_reg(ES8388_ADDR, ES8388_ADCCONTROL5, 0x02);  //ADCFsMode,singel SPEED,RATIO=256
     //ALC for Microphone
     res |= es8388_set_adc_dac_volume(ES_MODULE_ADC, ADC_VOLUME_DEFAULT_DB, 0); 
@@ -197,29 +198,29 @@ esp_err_t es8388_config_i2s( es_bits_length_t bits_length, es_module_t mode, es_
     if (mode == ES_MODULE_ADC || mode == ES_MODULE_ADC_DAC) {
         ESP_LOGW(ES_TAG,  "Setting I2S ADC Format %d", fmt);
         res = es_read_reg(ES8388_ADCCONTROL4, &reg);
-        reg = reg & 0xfc;
-        res |= es_write_reg(ES8388_ADDR, ES8388_ADCCONTROL4, reg | fmt);
+        reg &= 0xfc;
+        res |= es_write_reg(ES8388_ADDR, ES8388_ADCCONTROL4, reg | (fmt & 0x3));
     }
     if (mode == ES_MODULE_DAC || mode == ES_MODULE_ADC_DAC) {
         ESP_LOGW(ES_TAG,  "Setting I2S DAC Format: %d", fmt);
-        res = es_read_reg(ES8388_DACCONTROL1, &reg);
-        reg = reg & 0xf9;
+        res |= es_read_reg(ES8388_DACCONTROL1, &reg);
+        reg &= 0xf9;
         res |= es_write_reg(ES8388_ADDR, ES8388_DACCONTROL1, reg | (fmt << 1));
     }
 
 
     // Set the Sample bits length
-    int bits = (int)bits_length;
+    int bits = (int)bits_length & 0x7;
     if (mode == ES_MODULE_ADC || mode == ES_MODULE_ADC_DAC) {
         ESP_LOGW(ES_TAG,  "Setting I2S ADC Bits: %d", bits);
         res = es_read_reg(ES8388_ADCCONTROL4, &reg);
-        reg = reg & 0xe3;
+        reg &= 0xe3;
         res |=  es_write_reg(ES8388_ADDR, ES8388_ADCCONTROL4, reg | (bits << 2));
     }
     if (mode == ES_MODULE_DAC || mode == ES_MODULE_ADC_DAC) {
         ESP_LOGW(ES_TAG, "Setting I2S DAC Bits: %d", bits);
         res = es_read_reg(ES8388_DACCONTROL1, &reg);
-        reg = reg & 0xc7;
+        reg &= 0xc7;
         res |= es_write_reg(ES8388_ADDR, ES8388_DACCONTROL1, reg | (bits << 3));
     }
     return res;
