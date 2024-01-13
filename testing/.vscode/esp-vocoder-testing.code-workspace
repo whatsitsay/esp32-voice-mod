@@ -1,9 +1,6 @@
 {
   "folders": [
     {
-      "path": "../components"
-    },
-    {
       "path": "../fft_mod_testing/single_shift"
     },
     {
@@ -17,6 +14,12 @@
     },
     {
       "path": "../fft_mod_testing/shift_chorus"
+    },
+    {
+      "path": "../../components"
+    },
+    {
+      "path": "../../main"
     }
   ],
   "settings": {

@@ -52,9 +52,16 @@ __attribute__((aligned(16))) float prev_rx_FFT[FFT_MOD_SIZE * 2]; // For inst fr
 // Peak shift buffers
 float rx_FFT_mag[FFT_MOD_SIZE]; // Needed for peak shifting
 float run_phase_comp[2 * FFT_MOD_SIZE]; // Cumulative phase compensation buffer
+// True envelope buffers
+// Use tx_iFFT to save memory for envelope FFT/cepstrum buffers
+float* env_FFT = tx_iFFT;
+float* cepstrum_buff = tx_iFFT + N_SAMPLES;
+// Allocate envelope buffer
+float rx_env[FFT_MOD_SIZE];
+float rx_env_inv[FFT_MOD_SIZE]; // Inverse for ratio calc
 
-#define NOISE_THRESHOLD_DB (28) // Empirical
-#define SILENCE_RESET_COUNT (10) // ~every half second
+#define NOISE_THRESHOLD_DB (7) // Empirical
+#define SILENCE_RESET_COUNT (5) // ~every quarter second
 
 // Ping-pong buffers
 #define NUM_BUFFERS (2)
@@ -79,16 +86,16 @@ TaskHandle_t  xTaskStatsHandle;
 TaskHandle_t  xModeSwitchTaskHandle;
 // Stack sizes based empirically on high watermarks, with a little extra room just in case
 // Should be revisited if changes are made
-#define DSP_TASK_STACK_SIZE (16384u) // Watermark: 14368
-#define DSP_TASK_CORE (0)
+#define DSP_TASK_STACK_SIZE (15000u) // Watermark: 14368
+#define DSP_TASK_CORE (1)
 #define RX_TASK_STACK_SIZE (3500u) // Watermark: 3464
-#define RX_TASK_CORE (1)
+#define RX_TASK_CORE (0)
 #define TX_TASK_STACK_SIZE (3500u) // Watermark: 3456
-#define TX_TASK_CORE (1)
+#define TX_TASK_CORE (0)
 #define TASK_STATS_STACK_SIZE (3000u) // Watermark: 1564, but crashes otherwise
 #define TASK_STATS_CORE (0)
-#define MODE_SWITCH_TASK_CORE (1)
 #define MODE_SWITCH_TASK_STACK_SIZE (800u) // Watermark: 212
+#define MODE_SWITCH_TASK_CORE (0)
 
 #define DSP_TASK_PRIORITY (1U) // Just above idle
 #define TX_TASK_PRIORITY (10U) // Higher due to it being blocked
@@ -108,30 +115,27 @@ EventGroupHandle_t xTaskSyncBits;
 #define SYNC_TIMEOUT_TICKS  (5000 / portTICK_PERIOD_MS) // Raise error if not synced by this point
 
 // Semaphores
-SemaphoreHandle_t xDbgMutex, xModeSwitchMutex;
-
-#define PLOT_LEN (128)
-__attribute__((aligned(16))) float tx_FFT_mag[PLOT_LEN]; // For debug only
+SemaphoreHandle_t xModeSwitchMutex;
 
 // Lookup table for pitch shift factors
-#define NUM_PITCH_SHIFTS (4)
+#define NUM_PITCH_SHIFTS (3) // Unity (root) done separately
 // Pitch-shift for minor 7th where original sound is 5th
 static const float PITCH_SHIFT_FACTORS[] = {
-  1.0, // Original sound
+  // 1.0, // Original sound
   0.66667, // Lower Fourth ("Tonic")
   0.8, // Lower 6th flat (Minor third of new tonic, 2/3 * 6/5 = 4/5)
   1.2, // Minor Third (Flat seventh of new tonic)
 };
 static const float PITCH_SHIFT_GAINS[] = {
-  1.0, // Original sound
+  // 1.0, // Original sound
   1.1, // Lower fourth
   1.0, // Lower sixth flat
   0.8, // Minor third
 };
 
-#define LOW_EFFECT_SHIFT  (0.75)
+#define LOW_EFFECT_SHIFT  (0.5)
 #define LOW_EFFECT_GAIN   (1.2)
-#define HIGH_EFFECT_SHIFT (1.5)
+#define HIGH_EFFECT_SHIFT (2.0)
 #define HIGH_EFFECT_GAIN  (1.0)
 #define PASSTHROUGH_SHIFT (1.0)
 #define PASSTHROUGH_GAIN  (1.0)

@@ -34,6 +34,7 @@
 #include <algo_common.h>
 #include <peak_shift.h>
 #include <gpio_button.h>
+#include <filters.h>
 #include "esp_vocoder_main.h"
 
 ////// HELPER FUNCTIONS //////
@@ -45,14 +46,8 @@
  * @param txBuffer - Output buffer for modified sound data for transmission
  */
 void audio_data_modification(int* rxBuffer, int* txBuffer) {
-    static const char* TAG = "Audio Modification";
     static vocoder_mode_e prev_vocoder_mode = MOD_CHORUS;
     static unsigned silence_count = 0;
-
-    // Copy RX overlap into debug buffer
-    if (xSemaphoreTake(xDbgMutex, 500 / portTICK_PERIOD_MS) != pdTRUE) {
-        ESP_LOGE(TAG, "Failed to get mutex for RX debug buffer!");
-    }
 
     // Copy in previous input FFT
     memcpy(prev_rx_FFT, rx_FFT, sizeof(prev_rx_FFT));
@@ -74,11 +69,24 @@ void audio_data_modification(int* rxBuffer, int* txBuffer) {
 
     // Magnitude calculation
     float max_mag_db = calc_fft_mag_db(rx_FFT, rx_FFT_mag, FFT_MOD_SIZE);
+    // Change to raw log for true env calculation
+    dsps_mulc_f32(rx_FFT_mag, rx_FFT_mag, FFT_MOD_SIZE, 0.1, 1, 1);
 
     // Find peaks
     int num_peaks = find_local_peaks();
 
     num_peaks_sum += num_peaks;
+
+    // Calculate true envelope, using fundamental frequency estimate from peak finding
+    calc_true_envelope(rx_FFT_mag, rx_env, est_fundamental_freq());
+    // Convert to raw from log for pre-warping
+    for (int i = 0; i < FFT_MOD_SIZE; i++) {
+        rx_env[i] = pow10f(rx_env[i]);
+        // Calc inverse
+        rx_env_inv[i] = 1 / rx_env[i];
+    }
+    // Return to using dB in mag plot
+    dsps_mulc_f32(rx_FFT_mag, rx_FFT_mag, FFT_MOD_SIZE, 10, 1, 1);
 
     // Perform peak shift, if there are any peaks
     // First get mode mutex
@@ -93,7 +101,7 @@ void audio_data_modification(int* rxBuffer, int* txBuffer) {
     } else if (max_mag_db < NOISE_THRESHOLD_DB) {
         // Reset array if near silence (below threshold) base on counter
         silence_count++;
-        if (silence_count % SILENCE_RESET_COUNT) {
+        if (silence_count % SILENCE_RESET_COUNT == 0) {
             reset_phase_comp_arr(run_phase_comp);
             phase_reset_count++;
         }
@@ -105,7 +113,9 @@ void audio_data_modification(int* rxBuffer, int* txBuffer) {
 
     switch (vocoder_mode) {
         case MOD_CHORUS: {
-            // Perform full chorus shift
+            // Copy in original sound (save cycles)
+            memcpy(tx_iFFT, rx_FFT, FFT_MOD_SIZE * 2 * sizeof(float));
+            // Perform full chorus shift for the rest
             for (int i = 0; i < NUM_PITCH_SHIFTS; i++) {
                 shift_peaks(PITCH_SHIFT_FACTORS[i], PITCH_SHIFT_GAINS[i], run_phase_comp);
             }
@@ -136,9 +146,6 @@ void audio_data_modification(int* rxBuffer, int* txBuffer) {
     // Give mutex
     xSemaphoreGive(xModeSwitchMutex);
 
-    // Calculate output magnitudes
-    calc_fft_mag_db(tx_iFFT, tx_FFT_mag, PLOT_LEN);
-
     // Fill latter half of FFT with conjugate mirror data
     fill_mirror_fft(tx_iFFT, N);
 
@@ -158,7 +165,6 @@ void audio_data_modification(int* rxBuffer, int* txBuffer) {
         float tx_overlap_val = tx_iFFT[2 * (i + HOP_SIZE)] * get_window(i + HOP_SIZE);
         txBuffer_overlap[i] = tx_overlap_val;
     }
-    xSemaphoreGive(xDbgMutex);
 }
 
 void set_mode_leds()
@@ -242,6 +248,10 @@ void proc_audio_data(void* pvParameters)
     // Wait for initial notification from RX task, so first audio data is half-valid
     // This should limit delay to just the first swap, i.e. 50 ms
     (void) ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
+    // Register with WDT
+    esp_task_wdt_add(NULL);
+
     // Main loop
     while (1) {
         // Clear event bit
@@ -262,9 +272,13 @@ void proc_audio_data(void* pvParameters)
         volatile float iter_calc_time = (float)(end_cc - start_cc) / 240e3;
         // Check against buffering time for I2S, with a little extra in case
         // If this is failed, then the audio will be choppy
-        if (iter_calc_time > 1.1 * I2S_BUFFER_TIME_MS) {
+        if (iter_calc_time > 1.5 * I2S_BUFFER_TIME_MS) {
             ESP_LOGE(TAG, "DSP calculation time too long! Should be <= %.1f ms, is instead %.3f", I2S_BUFFER_TIME_MS, iter_calc_time);
             configASSERT(false);
+        }
+        else if (iter_calc_time > I2S_BUFFER_TIME_MS) {
+            // Just issue warning
+            ESP_LOGW(TAG, "DSP calculation time a little too long at %.3f ms", iter_calc_time);
         }
 
         dsp_calc_time_sum += iter_calc_time;
@@ -275,6 +289,9 @@ void proc_audio_data(void* pvParameters)
         {
             rxBuffer_overlap[i] = rxBuffer[2 * i];
         }
+
+        // Reset watchdog
+        esp_task_wdt_reset();
 
         // Set event group bit
         // Ignore result (will be checked in main loop)
@@ -374,19 +391,9 @@ void i2s_transmit(void* pvParameters)
 void print_task_stats(void* pvParameters)
 {
     const char* TAG = "Task Stats";
-    float* rx_FFT_mag_cpy = (float *)malloc(PLOT_LEN * sizeof(float));
-    float* tx_FFT_mag_cpy = (float *)malloc(PLOT_LEN * sizeof(float));
-
-    configASSERT( (rx_FFT_mag_cpy != NULL) && (tx_FFT_mag_cpy != NULL) );
 
     while (1) {
-        vTaskDelay(3000 / portTICK_PERIOD_MS);
-
-        // Grab mutex
-        if (xSemaphoreTake(xDbgMutex, portMAX_DELAY) != pdTRUE) {
-            ESP_LOGE(TAG, "Failed to get debug buffer mutex for stats");
-            return;
-        }
+        vTaskDelay(5000 / portTICK_PERIOD_MS);
 
         // Calculate average time spent doing DSP calculations in ms
         float dsp_calc_time_avg = dsp_calc_time_sum / loop_count;
@@ -403,21 +410,18 @@ void print_task_stats(void* pvParameters)
         loop_count = 0;
         num_peaks_sum = 0;
 
-        // Copy magnitude buffers
-        memcpy(rx_FFT_mag_cpy, rx_FFT_mag, PLOT_LEN * sizeof(float));
-        memcpy(tx_FFT_mag_cpy, tx_FFT_mag, PLOT_LEN * sizeof(float));
-
         // Print local peaks
         print_local_peaks();
 
-        // Release mutex
-        xSemaphoreGive(xDbgMutex);
+        // Copy magnitude buffers
+        // memcpy(rx_FFT_mag_cpy, rx_FFT_mag, PLOT_LEN * sizeof(float));
+        // memcpy(tx_FFT_mag_cpy, tx_FFT_mag, PLOT_LEN * sizeof(float));
 
         // Plot magnitudes
-        ESP_LOGI(TAG, "Input FT magnitude (dB):");
-        dsps_view(rx_FFT_mag_cpy, PLOT_LEN, PLOT_LEN, 10, 0, 40, 'x');
-        ESP_LOGI(TAG, "Output FT magnitude (dB):");
-        dsps_view(tx_FFT_mag_cpy, PLOT_LEN, PLOT_LEN, 10, 0, 40, 'o');
+        // ESP_LOGI(TAG, "Input FT magnitude (dB):");
+        // dsps_view(rx_FFT_mag_cpy, PLOT_LEN, PLOT_LEN, 10, -30, 10, 'x');
+        // ESP_LOGI(TAG, "Output FT magnitude (dB):");
+        // dsps_view(tx_FFT_mag_cpy, PLOT_LEN, PLOT_LEN, 10, -30, 10, 'o');
 
         // Get stack watermarks
         UBaseType_t DSPStackWatermark = uxTaskGetStackHighWaterMark(xDSPTaskHandle);
@@ -434,7 +438,7 @@ void print_task_stats(void* pvParameters)
         ESP_LOGI(TAG, "Stats Task: %0d", StatsStackWatermark);
 
         size_t free_heap_size = xPortGetFreeHeapSize();
-        ESP_LOGW(TAG, "Free heap remaining: %d B", free_heap_size);
+        ESP_LOGW(TAG, "Free heap remaining: %d B\n", free_heap_size);
     }
 }
 
@@ -533,18 +537,21 @@ void app_main(void)
         .fft_prev_ptr = prev_rx_FFT,
         .fft_mag_ptr = rx_FFT_mag,
         .fft_out_ptr = tx_iFFT,
+        .true_env_ptr = rx_env,
+        .inv_env_ptr  = rx_env_inv,
     };
     init_peak_shift_cfg(&cfg);
 
     // Reset phase compensation buffer
     reset_phase_comp_arr(run_phase_comp);
 
+    // Config true envelope calculation
+    config_true_env_calc(env_FFT, cepstrum_buff, I2S_SAMPLING_FREQ_HZ);
+
     // Intantiate indices
     i2s_idx = I2S_IDX_START;
     dsp_idx = DSP_IDX_START;
 
-    // Create mutex for debug buffers
-    xDbgMutex = xSemaphoreCreateMutex();
     // Create semaphore for mode switching
     xModeSwitchMutex = xSemaphoreCreateMutex();
 

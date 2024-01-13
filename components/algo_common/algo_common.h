@@ -14,10 +14,14 @@
 
 #define MAX(x, y) ((x > y) ? x : y)
 #define MIN(x, y) ((x < y) ? x : y)
-#define FFT_DB_BASE (1e4) // Base value for comparison when calculating dB values of magnitude
 
 #define N_SAMPLES (4096) // Number of samples for FFT operations
 #define FFT_MOD_SIZE (N_SAMPLES/2 + 1) // Number of samples for modification, ie up to Nyquist
+#define I2S_VOLTAGE_CONV (3.576279113e-7) // 3.0 V / max I2S (1 << 23 - 1)
+
+// Useful for flag arrays
+#define SET_ARR_BIT(arr, idx, val) (arr[(idx)/8] |= ((val) ? 1 : 0) << ((idx) % 8))
+#define GET_ARR_BIT(arr, idx)      ((arr[(idx)/8] >> ((idx) % 8)) & 0x1)
 
 /**
  * @brief Calculate FFT from signal data
@@ -144,5 +148,18 @@ float get_euler_coeff(int angle_idx, bool imag_comp);
  * @return float - Value of window at index
  */
 float get_window(int idx);
+
+/**
+ * @brief Interpolate x between x_1 and x_0
+ * 
+ * Can also be used to extrapolate if x > x_1 (identical equation)
+ * 
+ * @param x - Desired interpolation point
+ * @param x_1 - Upper bound of interpolation 
+ * @param x_0 - Lower bound of interpolation
+ * @param y_arr - Second coordinate for interpolation result
+ * @return float - Interpolated/extrapolated Y value
+ */
+float interpolate_val(int x, int x_1, int x_0, float* y_arr);
 
 #endif // __ALGO_COMMON_H__

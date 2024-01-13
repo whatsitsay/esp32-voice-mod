@@ -19,9 +19,17 @@
 // Value is empirical, based on testing of sound quality with peak-finding algorithm and calc time
 #define MAX_PRINT_PEAKS (5) // To prevent overloading
 #define BAND_DIV_NBINS (16) // Number of bins for each 'band' when calculating peaks
+#define FUNDAMENTAL_FREQ_MAX_BIN (300) // Maximum bin for estimating the fundamental frequency (empirical)
 
-#define SET_ARR_BIT(arr, idx, val) (arr[idx/8] |= ((val) ? 1 : 0) << (idx % 8))
-#define GET_ARR_BIT(arr, idx)      ((arr[idx/8] >> (idx % 8)) & 0x1)
+// Parameters for low-pitch index correction, as suggested by Roebel/Rodet
+// I.e., bins closer to the perceived fundamental are affected less by the
+// spectral envelope than higher bins
+// Should prevent low-pitch shifting from becoming too dull
+#define TRANSITION_BANDWIDTH (40) // Empirical
+#define ENVELOPE_ASYMPTOTE_MAX (8) // 1/(1+exp(x)) is < 60 dB from asymptotes when |x|>7.6~=8
+// For LUT, give just enough room to reach 60 dB point of asymptotes
+#define IDX_CORR_SIZE ((2 * TRANSITION_BANDWIDTH * ENVELOPE_ASYMPTOTE_MAX) + 1)
+#define IDX_CORR_FUNDAMENTAL (TRANSITION_BANDWIDTH * ENVELOPE_ASYMPTOTE_MAX)
 
 typedef struct {
   int hop_size;               // Hop size of analysis
@@ -30,6 +38,8 @@ typedef struct {
   float* fft_prev_ptr;        // Pointer to input FFT array of previous frame (size N+2)
   float* fft_mag_ptr;         // Pointer to input FFT magnitude array of current frame (size N/2+1)
   float* fft_out_ptr;         // Pointer to output FFT (size 2*N)
+  float* true_env_ptr;        // Pointer to true envelope buffer (calculated externally)
+  float* inv_env_ptr;         // Pointer to inverse of true envelope (i.e. 1/true_env above)
 } peak_shift_cfg_t;
 
 /**
@@ -76,6 +86,16 @@ int find_local_peaks(void);
  * 
  */
 void print_local_peaks(void);
+
+/**
+ * @brief Estimate the fundamental frequency from the peak array
+ * 
+ * Estimated as the max difference (in Hz) between two peaks
+ * Peaks should be found *first*
+ * 
+ * @return float - Fundamental frequency, or -1 if error
+ */
+float est_fundamental_freq(void);
 
 
 /**

@@ -8,6 +8,7 @@
  */
 
 #include <math.h>
+#include <string.h>
 #include "sdkconfig.h"
 #include "esp_err.h"
 #include "esp_dsp.h"
@@ -8245,7 +8246,7 @@ esp_err_t inv_fft(float* fft_arr, int num_samples)
     // Perform FFT on conjugate of original FFT
     // Invert all imaginary values by multiplying by -1
     // This entails all odd entries
-    dsps_mulc_f32(fft_arr+1, fft_arr+1, num_samples * 2-1, -1, 2, 2);
+    dsps_mulc_f32(fft_arr+1, fft_arr+1, num_samples, -1, 2, 2);
 
     // Calc FFT from conjugate-mirrored data
     esp_err_t resp = calc_fft(fft_arr, num_samples);
@@ -8255,7 +8256,7 @@ esp_err_t inv_fft(float* fft_arr, int num_samples)
     float corr_factor = 1.0 / (float)num_samples;
     dsps_mulc_f32(fft_arr, fft_arr, 2 * num_samples, corr_factor, 1, 1);
     // Then get conjugate again by multiplying all imaginary components by -1
-    dsps_mulc_f32(fft_arr+1, fft_arr+1, num_samples * 2-1, -1, 2, 2);
+    dsps_mulc_f32(fft_arr+1, fft_arr+1, num_samples, -1, 2, 2);
 
     return resp;
 }
@@ -8264,12 +8265,13 @@ float calc_fft_mag_db(float* fft_arr, float* fft_mag, int num_samples)
 {
   float max_mag_db = -INFINITY;
   for (int i = 0; i < num_samples; i++) {
-    float real = fft_arr[2 * i];
-    float imag = fft_arr[2 * i + 1];
+    // Convert from I2S 24-bit data to voltage
+    float real = fft_arr[2 * i] * I2S_VOLTAGE_CONV;
+    float imag = fft_arr[2 * i + 1] * I2S_VOLTAGE_CONV;
 
     float mag_raw = sqrtf((real * real) + (imag * imag));
 
-    fft_mag[i] = 10 * log10f(mag_raw / FFT_DB_BASE);
+    fft_mag[i] = 10 * log10f(mag_raw);
     // Store maximum magnitude
     if (fft_mag[i] > max_mag_db) max_mag_db = fft_mag[i];
   }
@@ -8331,4 +8333,11 @@ float get_window(int idx)
   configASSERT( idx < N_SAMPLES );
 
   return ROOT_HANN_WIN_LUT[idx];
+}
+
+float interpolate_val(int x, int x_1, int x_0, float* y_arr)
+{
+  // Formula for interpolation is:
+  // Y(x) = Y(x_0)+(x-x_0)/(x_1-x_0)*(Y(x_1)-Y(x_0))
+  return y_arr[x_0] + ((y_arr[x_1] - y_arr[x_0])/(x_1 - x_0))*(x - x_0);
 }
