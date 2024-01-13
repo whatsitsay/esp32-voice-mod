@@ -63,17 +63,18 @@ float rx_env_inv[FFT_MOD_SIZE]; // Inverse for ratio calc
 #define NOISE_THRESHOLD_DB (7) // Empirical
 #define SILENCE_RESET_COUNT (5) // ~every quarter second
 
-// Ping-pong buffers
-#define NUM_BUFFERS (2)
-int* txBuffers[NUM_BUFFERS];
-int* rxBuffers[NUM_BUFFERS];
-int i2s_idx, dsp_idx; // I2S idx should be the same between TX/RX, but opposite from DSP
-#define I2S_IDX_START (0)
-#define DSP_IDX_START (1)
-
-// Overlap buffers
-float txBuffer_overlap[HOP_SIZE];
-float rxBuffer_overlap[HOP_SIZE];
+// TX/RX buffers
+#define DELAY_TAP_SIZE   (0) // No delay tap for now
+// Full size will be delay tap size + N + hop size
+#define FULL_BUFFER_SIZE (DELAY_TAP_SIZE + N_SAMPLES + HOP_SIZE)
+int rxBuffer[FULL_BUFFER_SIZE];
+int txBuffer[FULL_BUFFER_SIZE - DELAY_TAP_SIZE]; // Not needed for TX (I2S buff acts as delay tap anyways)
+// I2S will fill the *end* of the RX Buffer
+int* i2s_rx = rxBuffer + N_SAMPLES + DELAY_TAP_SIZE;
+int* dsp_rx = rxBuffer + DELAY_TAP_SIZE; // Use start of buffer, which will include overlap + new data, but not delay tap
+// I2S will pull from the *beginning* of the TX buffer (excluding delay tap)
+int* i2s_tx = txBuffer;
+int* dsp_tx = txBuffer + HOP_SIZE;
 
 // Stream handles
 i2s_chan_handle_t rx_handle, tx_handle;
@@ -103,16 +104,13 @@ TaskHandle_t  xModeSwitchTaskHandle;
 #define TASK_STATS_PRIORITY (0U) // == IDLE PRIO
 #define MODE_SWITCH_TASK_PRIORITY (5U) // A little higher, but should be quick
 
-// Event group
-EventGroupHandle_t xTaskSyncBits;
-#define DSP_TASK_BIT      ( 1 << 0 )
-#define TX_TASK_BIT       ( 1 << 1 )
-#define RX_TASK_BIT       ( 1 << 2 )
-#define SWAP_COMPLETE_BIT ( 1 << 3 )
-#define BUFF_SWAP_BITS (DSP_TASK_BIT | TX_TASK_BIT | RX_TASK_BIT) // Sync to initiate buffer swap
-#define ALL_SYNC_BITS  (BUFF_SWAP_BITS | SWAP_COMPLETE_BIT) // Sync to move on
 #define I2S_BUFFER_TIME_MS (1000.0 * HOP_SIZE / I2S_SAMPLING_FREQ_HZ) // Transmit/receive buffer time for I2S channels
-#define SYNC_TIMEOUT_TICKS  (5000 / portTICK_PERIOD_MS) // Raise error if not synced by this point
+
+// Sync events
+EventGroupHandle_t RxSync, TxSync;
+#define I2S_SYNC_BIT (0x1)
+#define DSP_SYNC_BIT (0x2)
+#define ALL_SYNC_BITS (0x3) // I2S Sync | DSP Sync
 
 // Semaphores
 SemaphoreHandle_t xModeSwitchMutex;

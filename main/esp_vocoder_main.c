@@ -54,9 +54,8 @@ void audio_data_modification(int* rxBuffer, int* txBuffer) {
 
     // Copy values of rxBuffer into FFT buffer
     for (int i = 0; i < N_SAMPLES; i++) {
-        // Select sample. If first half, use rxBuffer_overlap. Otherwise use rxBuffer
-        int rx_val = (i < HOP_SIZE) ? rxBuffer_overlap[i] : rxBuffer[2 * (i - HOP_SIZE)];
-
+        // Get sample
+        int rx_val = dsp_rx[i];
         // Dot-product with hann window
         // Downshift to prevent overflow (last 8 bits are always 0)
         rx_FFT[2 * i] = (float)(rx_val >> I2S_DOWNSHIFT) * get_window(i);
@@ -153,17 +152,20 @@ void audio_data_modification(int* rxBuffer, int* txBuffer) {
     ESP_ERROR_CHECK(inv_fft(tx_iFFT, N));
 
     // Fill TX buffer
+    // First half will be overlap-add of previous data and current
     for (int i = 0; i < HOP_SIZE; i++)
     {
-        // Add-overlay beginning portion of iFFT into txBuffer
-        float tx_val = tx_iFFT[2 * i] * get_window(i); // Window result
-        txBuffer[2 * i] = (int)(txBuffer_overlap[i] + tx_val); 
-        txBuffer[2 * i] <<= I2S_DOWNSHIFT; // Increase int value
-        txBuffer[2 * i + 1] = txBuffer[2 * i]; // Copy L and R
-
-        // Store latter portion for use next loop
-        float tx_overlap_val = tx_iFFT[2 * (i + HOP_SIZE)] * get_window(i + HOP_SIZE);
-        txBuffer_overlap[i] = tx_overlap_val;
+        float tx_new     = tx_iFFT[2 * i] * get_window(i); // Window as former half
+        float tx_overlap = dsp_tx[i] * get_window(i + HOP_SIZE); // Window as latter half
+        // Sum for overlap-add
+        dsp_tx[i] = (int)roundf(tx_new + tx_overlap);
+        // Correct for bitshift
+        dsp_tx[i] <<= I2S_DOWNSHIFT;
+    }
+    // Second half will be overlap data
+    for (int i = HOP_SIZE; i < N_SAMPLES; i++)
+    {
+        dsp_tx[i] = (int)roundf(tx_iFFT[2 * i]); // Store as rounded value
     }
 }
 
@@ -176,17 +178,6 @@ void set_mode_leds()
 }
 
 ///// CALLBACKS ///// 
-
-#if configCHECK_FOR_STACK_OVERFLOW == 1
-void vApplicationStackOverflowHook(TaskHandle_t xTask, signed char *pcTaskName) {
-    size_t data_written;
-    // Flush I2S transmit by sending all 0s
-    memset(txBuffers[i2s_idx], 0, HOP_BUFFER_SIZE_B);
-    i2s_channel_write(tx_handle, stream_data, HOP_BUFFER_SIZE_B, &data_written, 1000 / portTICK_PERIOD_MS);
-    // Restart ESP32
-    esp_restart();
-}
-#endif
 
 /**
  * @brief Callback for RX received event. Will send notification
@@ -245,21 +236,20 @@ static IRAM_ATTR bool tx_sent_overflow(i2s_chan_handle_t handle, i2s_event_data_
 void proc_audio_data(void* pvParameters)
 {
     static const char* TAG = "Audio DSP";
-    // Wait for initial notification from RX task, so first audio data is half-valid
-    // This should limit delay to just the first swap, i.e. 50 ms
-    (void) ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
     // Register with WDT
     esp_task_wdt_add(NULL);
 
     // Main loop
     while (1) {
-        // Clear event bit
-        (void) xEventGroupClearBits(xTaskSyncBits, DSP_TASK_BIT);
+        // Wait for RX bit to be set
+        (void) xEventGroupWaitBits(RxSync, I2S_SYNC_BIT, pdFALSE, pdTRUE, portMAX_DELAY);
 
-        // Set buffer pointers
-        int* rxBuffer = rxBuffers[dsp_idx];
-        int* txBuffer = txBuffers[dsp_idx];
+        // Move up delay tap
+        // FIXME need to work in delay tap, if desired
+        memcpy(dsp_rx, dsp_rx + HOP_SIZE, N_SAMPLES * sizeof(int));
+        // Set individual bit and move on
+        (void) xEventGroupSetBits(RxSync, DSP_SYNC_BIT);
 
         unsigned int start_cc = dsp_get_cpu_cycle_count();
 
@@ -284,21 +274,19 @@ void proc_audio_data(void* pvParameters)
         dsp_calc_time_sum += iter_calc_time;
         loop_count++;
 
-        // Copy rxBuffer into rxBuffer_overlap
-        for (int i = 0; i < HOP_SIZE; i++)
-        {
-            rxBuffer_overlap[i] = rxBuffer[2 * i];
-        }
-
         // Reset watchdog
         esp_task_wdt_reset();
 
-        // Set event group bit
-        // Ignore result (will be checked in main loop)
-        (void) xEventGroupSync(xTaskSyncBits,
-                               DSP_TASK_BIT,
+        // Move up buffer for I2S
+        memcpy(dsp_tx, dsp_tx + HOP_SIZE, N_SAMPLES * sizeof(int));
+
+        // Set event group bit and wait for sync
+        (void) xEventGroupSync(TxSync,
+                               DSP_SYNC_BIT,
                                ALL_SYNC_BITS,
                                portMAX_DELAY);
+        // Clear both bits
+        (void) xEventGroupClearBits(RxSync, ALL_SYNC_BITS);
     }
     
 }
@@ -311,29 +299,16 @@ void i2s_receive(void* pvParameters)
 
     configASSERT( rx_handle != NULL );
 
+    // Allocate stream data outside of task
+    int* stream_data = (int *)pvParameters;
+    configASSERT( stream_data != NULL );
+
     // Enable RX channel
     ESP_ERROR_CHECK(i2s_channel_enable(rx_handle));
 
-    // Perform first read with dsp buffer, so that it has real data to use
-    // for the first frame
-    i2s_channel_read(rx_handle, rxBuffers[dsp_idx], HOP_BUFFER_SIZE_B, &data_received, 300 / portTICK_PERIOD_MS);
-    if (data_received != HOP_BUFFER_SIZE_B) {
-        ESP_LOGE(TAG, "Only read %d out of %d bytes from I2S buffer", data_received, HOP_BUFFER_SIZE_B);
-    }
-
-    // Notify TX and DSP task to continue on
-    xTaskNotifyGive(xTxTaskHandle);
-    xTaskNotifyGive(xDSPTaskHandle);
-
     while (1) {
-        
-        // Clear event bit
-        (void) xEventGroupClearBits(xTaskSyncBits, RX_TASK_BIT);
-
         // Wait for sent notification
         (void) ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-
-        int* stream_data = rxBuffers[i2s_idx];
 
         // Read from I2S buffer
         i2s_channel_read(rx_handle, stream_data, HOP_BUFFER_SIZE_B, &data_received, 300 / portTICK_PERIOD_MS);
@@ -341,13 +316,20 @@ void i2s_receive(void* pvParameters)
             ESP_LOGE(TAG, "Only read %d out of %d bytes from I2S buffer", data_received, HOP_BUFFER_SIZE_B);
         }
 
-        // Set event group bit
-        // Ignore result (will be checked in main loop)
-        (void) xEventGroupSync(xTaskSyncBits,
-                               RX_TASK_BIT,
+        // Fill I2S RX buffer
+        // For now just use even-indexed values for left mic
+        for (int i = 0; i < HOP_SIZE; i++) {
+            i2s_rx[i] = stream_data[2 * i];
+        }
+
+        // Set event group bit, wait for all sync before moving on
+        (void) xEventGroupSync(RxSync,
+                               I2S_SYNC_BIT,
                                ALL_SYNC_BITS,
                                portMAX_DELAY);
 
+        // Clear all bits
+        (void) xEventGroupClearBits(RxSync, ALL_SYNC_BITS);
     }
 }
 
@@ -356,21 +338,28 @@ void i2s_transmit(void* pvParameters)
     static const char *TAG = "I2S transmit";
 
     configASSERT( tx_handle != NULL );
+
+    // Allocate stream data outside of task
+    int* stream_data = (int *)pvParameters;
+    configASSERT( stream_data != NULL );
     
     // Enable TX channel
     ESP_ERROR_CHECK(i2s_channel_enable(tx_handle));
 
-    // Wait for initial notification from RX task, so first audio data is half-valid
-    // This should limit delay to just the first swap, i.e. 50 ms
-    (void) ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-
     while (1) {
         size_t data_written = 0;
 
-        // Clear event bits
-        (void) xEventGroupClearBits(xTaskSyncBits, TX_TASK_BIT);
+        // Wait for DSP sync bit to be set before continuing on
+        (void) xEventGroupWaitBits(TxSync, DSP_SYNC_BIT, pdFALSE, pdTRUE, portMAX_DELAY);
 
-        int* stream_data = txBuffers[i2s_idx];
+        // Copy in DSP data to stream buffer
+        for (int i = 0; i < HOP_SIZE; i++) {
+            stream_data[2 * i]     = i2s_tx[i];
+            stream_data[2 * i + 1] = i2s_tx[i];
+        }
+
+        // Set bit and release DSP task
+        (void) xEventGroupSetBits(TxSync, I2S_SYNC_BIT);
 
         // Write to I2S buffer
         // No error check here to allow for partial writes
@@ -378,13 +367,6 @@ void i2s_transmit(void* pvParameters)
         if (data_written != HOP_BUFFER_SIZE_B) {
             ESP_LOGE(TAG, "Only wrote %d out of %d bytes to I2S buffer", data_written, HOP_BUFFER_SIZE_B);
         }
-
-        // Set event group bit
-        // Ignore result (will be checked in main loop)
-        (void) xEventGroupSync(xTaskSyncBits,
-                               TX_TASK_BIT,
-                               ALL_SYNC_BITS,
-                               portMAX_DELAY);
     }
 }
 
@@ -555,8 +537,9 @@ void app_main(void)
     // Create semaphore for mode switching
     xModeSwitchMutex = xSemaphoreCreateMutex();
 
-    // Instantiate event group for task sync
-    xTaskSyncBits = xEventGroupCreate();
+    // Instantiate sync event groups
+    RxSync = xEventGroupCreate();
+    TxSync = xEventGroupCreate();
 
     // Instantiate I2S callbacks
     i2s_event_callbacks_t cbs = {
@@ -631,42 +614,6 @@ void app_main(void)
         vTaskDelay(5000 / portTICK_PERIOD_MS);
         esp_restart();
     }
-    
-    // Main loop
-    ESP_LOGI(TAG, "Finished setup, entering main loop.");
-    while (1) {
-        EventBits_t uxReturn;
-        // Clear switch bit
-        (void) xEventGroupClearBits(xTaskSyncBits, BUFF_SWAP_BITS);
-        // Wait for all other tasks to finish
-        uxReturn = xEventGroupWaitBits(xTaskSyncBits,
-                                       BUFF_SWAP_BITS,
-                                       pdFALSE, // Don't clear on exit
-                                       pdTRUE, // Wait for all bits
-                                       SYNC_TIMEOUT_TICKS);
 
-        // Assert all bits have been set
-        configASSERT( (uxReturn & BUFF_SWAP_BITS) == BUFF_SWAP_BITS );
-
-        // Swap indices with XOR
-        dsp_idx ^= 1;
-        i2s_idx ^= 1;
-
-        configASSERT( dsp_idx != i2s_idx );
-
-        // Check headphone jack toggle
-        es_toggle_power_amp();
-
-        // Set remaining bit
-        uxReturn = xEventGroupSync(xTaskSyncBits,
-                                   SWAP_COMPLETE_BIT,
-                                   ALL_SYNC_BITS,
-                                   0); // Should be no delay
-        configASSERT( (uxReturn & ALL_SYNC_BITS) == ALL_SYNC_BITS );
-    }
-
-    // If this point is hit, wait some time then restart
-    ESP_LOGE(TAG, "Exited main loop! Restarting ESP in 5 seconds...");
-    vTaskDelay(5000 / portTICK_PERIOD_MS);
-    esp_restart();
+    // Can safely exit here, as tasks will handle the rest
 }
