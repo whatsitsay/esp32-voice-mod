@@ -298,6 +298,10 @@ void i2s_receive(void* pvParameters)
     size_t data_received = 0;
 
     configASSERT( rx_handle != NULL );
+    
+    // Instantiate stream buffer
+    int* rx_stream_buff = (int *)pvParameters;
+    configASSERT( rx_stream_buff != NULL );
 
     // Enable RX channel
     ESP_ERROR_CHECK(i2s_channel_enable(rx_handle));
@@ -306,16 +310,21 @@ void i2s_receive(void* pvParameters)
         // Wait for sent notification
         (void) ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
-        // Read from I2S buffer
-        i2s_channel_read(rx_handle, rx_stream_buff, HOP_BUFFER_SIZE_B, &data_received, 300 / portTICK_PERIOD_MS);
-        if (data_received != HOP_BUFFER_SIZE_B) {
-            ESP_LOGE(TAG, "Only read %d out of %d bytes from I2S buffer", data_received, HOP_BUFFER_SIZE_B);
-        }
+        int* i2s_rx_ptr = i2s_rx;
 
-        // Fill I2S RX buffer
-        // For now just use even-indexed values for left mic
-        for (int i = 0; i < HOP_SIZE; i++) {
-            i2s_rx[i] = rx_stream_buff[2 * i];
+        // Read from I2S buffer
+        for (int i = 0; i < RX_STREAM_BUFF_DIV; i++) {
+            i2s_channel_read(rx_handle, rx_stream_buff, RX_STREAM_BUFF_SIZE_B, &data_received, 300 / portTICK_PERIOD_MS);
+            if (data_received != RX_STREAM_BUFF_SIZE_B) {
+                ESP_LOGE(TAG, "Only read %d out of %d bytes from I2S buffer", data_received, RX_STREAM_BUFF_SIZE_B);
+            }
+
+            // Fill I2S RX buffer
+            // For now just use even-indexed values for left mic
+            for (int j = 0; j < HOP_SIZE / RX_STREAM_BUFF_DIV; j++) {
+                *i2s_rx_ptr = rx_stream_buff[2 * j];
+                i2s_rx_ptr++; // Increment pointer
+            }
         }
 
         // Set event group bit, wait for all sync before moving on
@@ -334,6 +343,10 @@ void i2s_transmit(void* pvParameters)
     static const char *TAG = "I2S transmit";
 
     configASSERT( tx_handle != NULL );
+
+    // Instantiate stream buffer
+    int* tx_stream_buff = (int *)pvParameters;
+    configASSERT( tx_stream_buff != NULL );
     
     // Enable TX channel
     ESP_ERROR_CHECK(i2s_channel_enable(tx_handle));
@@ -345,9 +358,9 @@ void i2s_transmit(void* pvParameters)
         (void) xEventGroupWaitBits(TxSync, DSP_SYNC_BIT, pdFALSE, pdTRUE, portMAX_DELAY);
 
         // Copy in DSP data to stream buffer
-        for (int i = 0; i < HOP_SIZE; i++) {
-            tx_stream_buff[2 * i]     = i2s_tx[i];
-            tx_stream_buff[2 * i + 1] = i2s_tx[i];
+        for (int j = 0; j < HOP_SIZE; j++) {
+            tx_stream_buff[2 * j]     = i2s_tx[j];
+            tx_stream_buff[2 * j + 1] = i2s_tx[j];
         }
 
         // Set bit and release DSP task
@@ -490,12 +503,14 @@ void app_main(void)
     txBuffer = calloc(FULL_BUFFER_SIZE, sizeof(int));
     configASSERT(rxBuffer != NULL && txBuffer != NULL);
 
+    // Allocate stream buffers
+    void* rx_stream_buff = malloc(RX_STREAM_BUFF_SIZE_B); // Smaller to save on memory footprint
+    void* tx_stream_buff = malloc(HOP_BUFFER_SIZE_B);
+
     // Clear out all other memory buffers
     memset(rx_FFT, 0, sizeof(rx_FFT));
     memset(prev_rx_FFT, 0, sizeof(prev_rx_FFT));
     memset(tx_iFFT, 0.0, sizeof(tx_iFFT));
-    memset(rx_stream_buff, 0, sizeof(rx_stream_buff));
-    memset(tx_stream_buff, 0, sizeof(tx_stream_buff));
 
     // Initialize FFT coefficients
     dsps_fft2r_init_fc32(NULL, N);
@@ -555,7 +570,7 @@ void app_main(void)
         i2s_receive, 
         "I2S Receive Task",
         RX_TASK_STACK_SIZE,
-        NULL,
+        rx_stream_buff,
         RX_TASK_PRIORITY,
         &xRxTaskHandle,
         RX_TASK_CORE
@@ -565,7 +580,7 @@ void app_main(void)
         i2s_transmit, 
         "I2S Transmit Task",
         TX_TASK_STACK_SIZE,
-        NULL,
+        tx_stream_buff,
         TX_TASK_PRIORITY,
         &xTxTaskHandle,
         TX_TASK_CORE
