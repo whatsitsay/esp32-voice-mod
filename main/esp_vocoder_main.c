@@ -631,6 +631,8 @@ void app_main(void)
         vTaskDelay(500 / portTICK_PERIOD_MS);
 
         // Toggle headphone jack
+        taskENTER_CRITICAL(&crit_mux);
         es_toggle_power_amp();
+        taskEXIT_CRITICAL(&crit_mux);
     };
 }

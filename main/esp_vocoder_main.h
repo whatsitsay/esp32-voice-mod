@@ -128,6 +128,7 @@ EventGroupHandle_t RxSync, TxSync;
 
 // Semaphores
 SemaphoreHandle_t xModeSwitchMutex;
+portMUX_TYPE crit_mux = portMUX_INITIALIZER_UNLOCKED;
 
 // Lookup table for pitch shift factors
 #define NUM_PITCH_SHIFTS (3) // Unity (root) done separately
