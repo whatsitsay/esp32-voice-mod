@@ -36,6 +36,7 @@
 #include <gpio_button.h>
 #include <filters.h>
 #include "esp_vocoder_main.h"
+#include <Yin.h>
 
 ////// HELPER FUNCTIONS //////
 
@@ -45,7 +46,7 @@
  * @param rxBuffer - Buffer containing microphone input sound data
  * @param txBuffer - Output buffer for modified sound data for transmission
  */
-void audio_data_modification(int* rxBuffer, int* txBuffer) {
+void audio_data_modification() {
     static vocoder_mode_e prev_vocoder_mode = MOD_CHORUS;
     static unsigned silence_count = 0;
 
@@ -58,7 +59,7 @@ void audio_data_modification(int* rxBuffer, int* txBuffer) {
         int rx_val = dsp_rx[i];
         // Dot-product with hann window
         // Downshift to prevent overflow (last 8 bits are always 0)
-        rx_FFT[2 * i] = (float)(rx_val >> I2S_DOWNSHIFT) * get_window(i);
+        rx_FFT[2 * i] = (float)(rx_val / I2S_DOWNSHIFT_DIV) * get_window(i);
         // Set imaginary component to 0
         rx_FFT[2 * i + 1] = 0;
     }
@@ -77,7 +78,7 @@ void audio_data_modification(int* rxBuffer, int* txBuffer) {
     num_peaks_sum += num_peaks;
 
     // Calculate true envelope, using fundamental frequency estimate from peak finding
-    calc_true_envelope(rx_FFT_mag, rx_env, est_fundamental_freq());
+    calc_true_envelope(rx_FFT_mag, rx_env, fundamental_freq_est);
     // Convert to raw from log for pre-warping
     for (int i = 0; i < FFT_MOD_SIZE; i++) {
         rx_env[i] = pow10f(rx_env[i]);
@@ -254,7 +255,7 @@ void proc_audio_data(void* pvParameters)
         unsigned int start_cc = dsp_get_cpu_cycle_count();
 
         // Modify data
-        audio_data_modification(rxBuffer, txBuffer);
+        audio_data_modification();
         
         unsigned int end_cc = dsp_get_cpu_cycle_count();
 
@@ -326,6 +327,11 @@ void i2s_receive(void* pvParameters)
                 i2s_rx_ptr++; // Increment pointer
             }
         }
+
+        // Calculate fundamental freq estimate using Yin algorithm
+        float hop_freq = Yin_getPitch(&yin_s, i2s_rx, I2S_SAMPLING_FREQ_HZ);
+        // Only latch as fundamental if value isn't -1
+        if (hop_freq > -1) fundamental_freq_est = hop_freq;
 
         // Set event group bit, wait for all sync before moving on
         (void) xEventGroupSync(RxSync,
@@ -399,6 +405,8 @@ void print_task_stats(void* pvParameters)
 
         // Print local peaks
         print_local_peaks();
+        // Print fundamental frequency estimate
+        ESP_LOGI(TAG, "Fundamental frequency est: %.2f Hz (prob %.4f)", fundamental_freq_est, yin_s.probability);
 
         // Copy magnitude buffers
         // memcpy(rx_FFT_mag_cpy, rx_FFT_mag, PLOT_LEN * sizeof(float));
@@ -514,6 +522,9 @@ void app_main(void)
 
     // Initialize FFT coefficients
     dsps_fft2r_init_fc32(NULL, N);
+
+    // Initialize Yin algorithm struct
+    Yin_init(&yin_s, YIN_SAMPLES, YIN_DEFAULT_THRESHOLD, yinBuffPtr);
 
     // Set peak shift algorithm config
     peak_shift_cfg_t cfg = {

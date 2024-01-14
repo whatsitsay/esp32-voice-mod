@@ -88,17 +88,6 @@ int find_local_peaks(void);
 void print_local_peaks(void);
 
 /**
- * @brief Estimate the fundamental frequency from the peak array
- * 
- * Estimated as the max difference (in Hz) between two peaks
- * Peaks should be found *first*
- * 
- * @return float - Fundamental frequency, or -1 if error
- */
-float est_fundamental_freq(void);
-
-
-/**
  * @brief Shift peaks by integer number of frequency bins
  * 
  * Based on the given shift factor, move the peaks and their ROI by the closest integer
