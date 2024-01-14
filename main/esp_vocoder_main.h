@@ -34,6 +34,7 @@
 #include <algo_common.h>
 #include <peak_shift.h>
 #include "esp_vocoder_main.h"
+#include <Yin.h>
 
 // Number of samples
 #define HOP_SIZE (N_SAMPLES / 2) // Overlap 50%
@@ -44,6 +45,7 @@ int N = N_SAMPLES;
 // I2S macros
 #define I2S_SAMPLING_FREQ_HZ (40960) // Slightly lower, but more even frequency resolution
 #define I2S_DOWNSHIFT (8) // 24-bit precision, can downshift safely by byte for FFT calcs
+#define I2S_DOWNSHIFT_DIV (256) // Shorthand for 1 << 8
 
 // FFT buffers
 __attribute__((aligned(16))) float rx_FFT[N_SAMPLES * 2]; // Will be complex
@@ -60,7 +62,19 @@ float* cepstrum_buff = tx_iFFT + N_SAMPLES;
 float rx_env[FFT_MOD_SIZE];
 float rx_env_inv[FFT_MOD_SIZE]; // Inverse for ratio calc
 
-#define NOISE_THRESHOLD_DB (14) // Empirical
+// Yin pitch detection
+#define YIN_SAMPLES (1024) // Significantly reduced to reduce calc time
+static Yin yin_s;
+static float yinBuffPtr[YIN_SAMPLES / 2];
+float fundamental_freq_est;
+
+// Yin pitch detection
+#define YIN_SAMPLES (1024) // Significantly reduced to reduce calc time
+static Yin yin_s;
+static float yinBuffPtr[YIN_SAMPLES / 2];
+float fundamental_freq_est;
+
+#define NOISE_THRESHOLD_DB (7) // Empirical
 #define SILENCE_RESET_COUNT (5) // ~every quarter second
 
 // TX/RX buffers
