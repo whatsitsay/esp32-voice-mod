@@ -67,14 +67,21 @@ float rx_env_inv[FFT_MOD_SIZE]; // Inverse for ratio calc
 #define DELAY_TAP_SIZE   (0) // No delay tap for now
 // Full size will be delay tap size + N + hop size
 #define FULL_BUFFER_SIZE (DELAY_TAP_SIZE + N_SAMPLES + HOP_SIZE)
-int rxBuffer[FULL_BUFFER_SIZE];
-int txBuffer[FULL_BUFFER_SIZE - DELAY_TAP_SIZE]; // Not needed for TX (I2S buff acts as delay tap anyways)
-// I2S will fill the *end* of the RX Buffer
-int* i2s_rx = rxBuffer + N_SAMPLES + DELAY_TAP_SIZE;
-int* dsp_rx = rxBuffer + DELAY_TAP_SIZE; // Use start of buffer, which will include overlap + new data, but not delay tap
-// I2S will pull from the *beginning* of the TX buffer (excluding delay tap)
-int* i2s_tx = txBuffer;
-int* dsp_tx = txBuffer + HOP_SIZE;
+int* rxBuffer;
+int* txBuffer;
+
+// Stream buffers for I2S
+int rx_stream_buff[HOP_SIZE * 2];
+int tx_stream_buff[HOP_SIZE * 2];
+
+// I2S RX will fill the *end* of the RX Buffer
+#define i2s_rx (rxBuffer + N_SAMPLES + DELAY_TAP_SIZE) 
+// DSP RX uses start of buffer, which will include overlap + new data, but not delay tap
+#define dsp_rx (rxBuffer + DELAY_TAP_SIZE)
+// I2S TX will pull from the *beginning* of the TX buffer (excluding delay tap)
+#define i2s_tx (txBuffer)
+// DSP TX will fill in latter portion
+#define dsp_tx (txBuffer + HOP_SIZE)
 
 // Stream handles
 i2s_chan_handle_t rx_handle, tx_handle;
