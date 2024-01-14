@@ -70,10 +70,6 @@ float rx_env_inv[FFT_MOD_SIZE]; // Inverse for ratio calc
 int* rxBuffer;
 int* txBuffer;
 
-// Stream buffers for I2S
-int rx_stream_buff[HOP_SIZE * 2];
-int tx_stream_buff[HOP_SIZE * 2];
-
 // I2S RX will fill the *end* of the RX Buffer
 #define i2s_rx (rxBuffer + N_SAMPLES + DELAY_TAP_SIZE) 
 // DSP RX uses start of buffer, which will include overlap + new data, but not delay tap
@@ -85,6 +81,9 @@ int tx_stream_buff[HOP_SIZE * 2];
 
 // Stream handles
 i2s_chan_handle_t rx_handle, tx_handle;
+// Divider for full size of hop buffer
+#define RX_STREAM_BUFF_DIV (8)
+#define RX_STREAM_BUFF_SIZE_B (HOP_BUFFER_SIZE_B / RX_STREAM_BUFF_DIV)
 
 // Task handles
 TaskHandle_t xDSPTaskHandle;
