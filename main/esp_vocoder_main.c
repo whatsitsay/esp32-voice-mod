@@ -512,8 +512,8 @@ void app_main(void)
     configASSERT(rxBuffer != NULL && txBuffer != NULL);
 
     // Allocate stream buffers
-    void* rx_stream_buff = malloc(RX_STREAM_BUFF_SIZE_B); // Smaller to save on memory footprint
-    void* tx_stream_buff = malloc(HOP_BUFFER_SIZE_B);
+    void* rx_stream_buff = calloc(2 * HOP_SIZE / RX_STREAM_BUFF_DIV, sizeof(int)); // Smaller to save on memory footprint
+    void* tx_stream_buff = calloc(2 * HOP_SIZE, sizeof(int));
 
     // Clear out all other memory buffers
     memset(rx_FFT, 0, sizeof(rx_FFT));
@@ -628,6 +628,9 @@ void app_main(void)
 
     // Loop forever
     while(1) {
-        vTaskDelay(10000 / portTICK_PERIOD_MS);
+        vTaskDelay(500 / portTICK_PERIOD_MS);
+
+        // Toggle headphone jack
+        es_toggle_power_amp();
     };
 }
