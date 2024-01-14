@@ -490,11 +490,14 @@ void mon_mode_switch(void* pvParameters)
 void app_main(void)
 {
     static const char *TAG = "main";
+    static bool init_speaker_silence = true;
     BaseType_t xReturned = 0UL;
     
     // Initiallize ES8388 and I2S channel
     es8388_config();
     es_i2s_init(&tx_handle, &rx_handle, I2S_SAMPLING_FREQ_HZ);
+    // Start silent
+    es8388_set_voice_mute(init_speaker_silence);
 
     ESP_LOGW(TAG, "Channels initiated!");
 
@@ -619,9 +622,16 @@ void app_main(void)
     while(1) {
         vTaskDelay(500 / portTICK_PERIOD_MS);
 
-        // Toggle headphone jack
         taskENTER_CRITICAL(&crit_mux);
+        // Toggle headphone jack
         es_toggle_power_amp();
+
         taskEXIT_CRITICAL(&crit_mux);
+
+        // If silent, unmute
+        if (init_speaker_silence) {
+            es8388_set_voice_mute(false);
+            init_speaker_silence = false;
+        }
     };
 }
