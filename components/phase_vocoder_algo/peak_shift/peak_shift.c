@@ -158,19 +158,8 @@ void print_local_peaks(void)
 
 float _get_true_env_correction(int old_idx, int new_idx)
 {
-  // TODO: removed index correction until artifacts can be removed at higher frequencies
-  // Calc distance from fundamental
-  // volatile int distance_from_fundamental = old_idx - _fundamental_freq_idx;
-  // volatile int correction_lut_idx = distance_from_fundamental + IDX_CORR_FUNDAMENTAL_CONST;
-  // // Calc index correction factor D(k) using LUT
-  // volatile float idx_corr_factor = (correction_lut_idx < 0) ? 1 : // Asymptote for x < fundamental 
-  //                         (correction_lut_idx >= IDX_CORR_SIZE_CONST) ? 0 : // Asymptote for x > fundamental
-  //                         _index_correction_lut[correction_lut_idx];
-  // // Estimate new index
-  // volatile int new_idx = roundf((idx_corr_factor + ((1 - idx_corr_factor) * shift_factor)) * old_idx);
-  // // Correct for reflection
-  // new_idx = (new_idx < 0) ? -1 * new_idx : (new_idx > NYQUIST_FREQ_IDX) ? NYQUIST_FREQ_IDX - new_idx : new_idx;
-  return peak_shift_cfg->true_env_ptr[new_idx] * peak_shift_cfg->inv_env_ptr[old_idx];
+  float true_env_gain_raw = peak_shift_cfg->true_env_ptr[new_idx] * peak_shift_cfg->inv_env_ptr[old_idx];
+  return true_env_gain;
 }
 
 void shift_peaks(float shift_factor, float shift_gain, float* run_phase_comp_ptr)

@@ -4116,7 +4116,9 @@ static const float EULER_COEFF_LUT[8192] = {
 };
 
 // root-Hann window for N=4096
-static const float ROOT_HANN_WIN_LUT[4096] = {
+#define HANN_WIN_LEN (4096)
+#define HANN_WIN_IDX_MULT (HANN_WIN_LEN / N_SAMPLES) // Index multiplier to account for smaller N
+static const float ROOT_HANN_WIN_LUT[HANN_WIN_LEN] = {
   0,
   0.00076699,
   0.00153398,
@@ -8332,7 +8334,7 @@ float get_window(int idx)
   // Raise exception if idx > sample size
   configASSERT( idx < N_SAMPLES );
 
-  return ROOT_HANN_WIN_LUT[idx];
+  return ROOT_HANN_WIN_LUT[idx * HANN_WIN_IDX_MULT];
 }
 
 float interpolate_val(int x, int x_1, int x_0, float* y_arr)
