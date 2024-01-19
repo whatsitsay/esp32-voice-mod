@@ -45,7 +45,7 @@
  * @param rxBuffer - Buffer containing microphone input sound data
  * @param txBuffer - Output buffer for modified sound data for transmission
  */
-void audio_data_modification(int* rxBuffer, int* txBuffer) {
+void audio_data_modification() {
     static vocoder_mode_e prev_vocoder_mode = MOD_CHORUS;
     static unsigned silence_count = 0;
 
@@ -254,7 +254,7 @@ void proc_audio_data(void* pvParameters)
         unsigned int start_cc = dsp_get_cpu_cycle_count();
 
         // Modify data
-        audio_data_modification(rxBuffer, txBuffer);
+        audio_data_modification();
         
         unsigned int end_cc = dsp_get_cpu_cycle_count();
 
