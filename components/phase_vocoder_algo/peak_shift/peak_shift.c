@@ -158,7 +158,7 @@ void print_local_peaks(void)
 
 float _get_true_env_correction(int old_idx, int new_idx)
 {
-  float true_env_gain_raw = peak_shift_cfg->true_env_ptr[new_idx] * peak_shift_cfg->inv_env_ptr[old_idx];
+  float true_env_gain = peak_shift_cfg->true_env_ptr[new_idx] * peak_shift_cfg->inv_env_ptr[old_idx];
   return true_env_gain;
 }
 

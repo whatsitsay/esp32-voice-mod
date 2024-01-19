@@ -127,17 +127,6 @@ void divide_complex(float x_real, float x_imag, float y_real, float y_imag, floa
 void polar_to_complex(float mag, float angle, float* cpx_real, float* cpx_imag);
 
 /**
- * @brief Get the euler coefficient for the given discrete angle
- * 
- * Automatically corrected for by N_SAMPLES
- * 
- * @param angle_idx - Index of discrete angle
- * @param imag_comp - True if imaginary component, false otherwise
- * @return float - Coefficient value
- */
-float get_euler_coeff(int angle_idx, bool imag_comp);
-
-/**
  * @brief Get window coefficient at the given index
  * 
  * Currently implemented to use root-Hann window for proper reconstruction
