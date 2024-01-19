@@ -67,6 +67,9 @@ float rx_env_inv[FFT_MOD_SIZE]; // Inverse for ratio calc
 static Yin yin_s;
 static float yinBuffPtr[YIN_SAMPLES / 2];
 float fundamental_freq_est;
+int fundamental_freq_idx;
+#define F0_EST_FB_FACTOR (0.05) // Feedback factor for LPF
+#define CEPSTRUM_BUFF    (50) // Extra buffer for cepstrum smoothing
 
 // Yin pitch detection
 #define YIN_SAMPLES (1024) // Significantly reduced to reduce calc time

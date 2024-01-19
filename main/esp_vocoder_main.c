@@ -78,10 +78,10 @@ void audio_data_modification() {
     num_peaks_sum += num_peaks;
 
     // Calculate true envelope, using fundamental frequency estimate from peak finding
-    calc_true_envelope(rx_FFT_mag, rx_env, fundamental_freq_est);
+    calc_true_envelope(rx_FFT_mag, rx_env, fundamental_freq_est + CEPSTRUM_BUFF);
     // Convert to raw from log for pre-warping
     for (int i = 0; i < FFT_MOD_SIZE; i++) {
-        rx_env[i] = pow10f(rx_env[i]);
+        rx_env[i] = pow10f(rx_env[i]/10);
         // Calc inverse
         rx_env_inv[i] = 1 / rx_env[i];
     }
@@ -117,21 +117,21 @@ void audio_data_modification() {
             memcpy(tx_iFFT, rx_FFT, FFT_MOD_SIZE * 2 * sizeof(float));
             // Perform full chorus shift for the rest
             for (int i = 0; i < NUM_PITCH_SHIFTS; i++) {
-                shift_peaks(PITCH_SHIFT_FACTORS[i], PITCH_SHIFT_GAINS[i], run_phase_comp);
+                shift_peaks(PITCH_SHIFT_FACTORS[i], PITCH_SHIFT_GAINS[i], fundamental_freq_idx, run_phase_comp);
             }
             break;
         }
         case MOD_LOW: {
-            shift_peaks(LOW_EFFECT_SHIFT, LOW_EFFECT_GAIN, run_phase_comp);
+            shift_peaks(LOW_EFFECT_SHIFT, LOW_EFFECT_GAIN, fundamental_freq_idx, run_phase_comp);
             break;
         }
         case MOD_HIGH: {
-            shift_peaks(HIGH_EFFECT_SHIFT, HIGH_EFFECT_GAIN, run_phase_comp);
+            shift_peaks(HIGH_EFFECT_SHIFT, HIGH_EFFECT_GAIN, fundamental_freq_idx, run_phase_comp);
             break;
         }
         case PASSTHROUGH: {
             // NOTE: this could just be another copy situation
-            shift_peaks(PASSTHROUGH_SHIFT, PASSTHROUGH_GAIN, run_phase_comp);
+            shift_peaks(PASSTHROUGH_SHIFT, PASSTHROUGH_GAIN, fundamental_freq_idx, run_phase_comp);
             break;
         }
         default: {
@@ -331,7 +331,12 @@ void i2s_receive(void* pvParameters)
         // Calculate fundamental freq estimate using Yin algorithm
         float hop_freq = Yin_getPitch(&yin_s, i2s_rx, I2S_SAMPLING_FREQ_HZ);
         // Only latch as fundamental if value isn't -1
-        if (hop_freq > -1) fundamental_freq_est = hop_freq;
+        if (hop_freq > -1) {
+            // Use LPF
+            fundamental_freq_est = (1 - F0_EST_FB_FACTOR) * hop_freq + F0_EST_FB_FACTOR;
+            // Round to get index; used for differentiating between above/below F0
+            fundamental_freq_idx = roundf((fundamental_freq_est / I2S_SAMPLING_FREQ_HZ) * N_SAMPLES);
+        }
 
         // Set event group bit, wait for all sync before moving on
         (void) xEventGroupSync(RxSync,
