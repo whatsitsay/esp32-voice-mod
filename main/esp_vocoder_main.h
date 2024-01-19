@@ -60,7 +60,7 @@ float* cepstrum_buff = tx_iFFT + N_SAMPLES;
 float rx_env[FFT_MOD_SIZE];
 float rx_env_inv[FFT_MOD_SIZE]; // Inverse for ratio calc
 
-#define NOISE_THRESHOLD_DB (7) // Empirical
+#define NOISE_THRESHOLD_DB (14) // Empirical
 #define SILENCE_RESET_COUNT (5) // ~every quarter second
 
 // TX/RX buffers

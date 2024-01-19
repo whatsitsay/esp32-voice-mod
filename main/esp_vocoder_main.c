@@ -69,7 +69,7 @@ void audio_data_modification() {
     // Magnitude calculation
     float max_mag_db = calc_fft_mag_db(rx_FFT, rx_FFT_mag, FFT_MOD_SIZE);
     // Change to raw log for true env calculation
-    dsps_mulc_f32(rx_FFT_mag, rx_FFT_mag, FFT_MOD_SIZE, 0.1, 1, 1);
+    dsps_mulc_f32(rx_FFT_mag, rx_FFT_mag, FFT_MOD_SIZE, 0.05, 1, 1);
 
     // Find peaks
     int num_peaks = find_local_peaks();
@@ -85,7 +85,7 @@ void audio_data_modification() {
         rx_env_inv[i] = 1 / rx_env[i];
     }
     // Return to using dB in mag plot
-    dsps_mulc_f32(rx_FFT_mag, rx_FFT_mag, FFT_MOD_SIZE, 10, 1, 1);
+    dsps_mulc_f32(rx_FFT_mag, rx_FFT_mag, FFT_MOD_SIZE, 20, 1, 1);
 
     // Perform peak shift, if there are any peaks
     // First get mode mutex

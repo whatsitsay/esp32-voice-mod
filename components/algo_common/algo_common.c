@@ -4173,7 +4173,7 @@ float calc_fft_mag_db(float* fft_arr, float* fft_mag, int num_samples)
 
     float mag_raw = sqrtf((real * real) + (imag * imag));
 
-    fft_mag[i] = 10 * log10f(mag_raw);
+    fft_mag[i] = 20 * log10f(mag_raw);
     // Store maximum magnitude
     if (fft_mag[i] > max_mag_db) max_mag_db = fft_mag[i];
   }
