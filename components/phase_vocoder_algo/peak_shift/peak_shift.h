@@ -18,8 +18,8 @@
 // Minimum threshold to consider magnitude a peak
 // Value is empirical, based on testing of sound quality with peak-finding algorithm and calc time
 #define MAX_PRINT_PEAKS (5) // To prevent overloading
-#define BAND_DIV_NBINS (16) // Number of bins for each 'band' when calculating peaks
-#define FUNDAMENTAL_FREQ_MAX_BIN (300) // Maximum bin for estimating the fundamental frequency (empirical)
+#define BAND_DIV_NBINS (8) // Number of bins for each 'band' when calculating peaks
+#define FUNDAMENTAL_FREQ_MAX_BIN (150) // Maximum bin for estimating the fundamental frequency (empirical)
 
 // Parameters for low-pitch index correction, as suggested by Roebel/Rodet
 // I.e., bins closer to the perceived fundamental are affected less by the
