@@ -1,0 +1,3 @@
+[submodule "components/fast_trig/FastTrig"]
+	path = components/fast_trig/FastTrig
+	url = https://github.com/whatsitsay/FastTrig
