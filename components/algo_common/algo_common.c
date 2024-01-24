@@ -14,6 +14,7 @@
 #include "esp_dsp.h"
 #include "freertos/FreeRTOS.h"
 #include "algo_common.h"
+#include <FastTrig.h>
 
 // root-Hann window for N=4096
 #define HANN_WIN_LEN (4096)
@@ -4163,23 +4164,39 @@ esp_err_t inv_fft(float* fft_arr, int num_samples)
     return resp;
 }
 
-float calc_fft_mag_db(float* fft_arr, float* fft_mag, int num_samples)
+float calc_fft_mag_raw(float* fft_arr, float* fft_mag, int num_samples)
 {
-  float max_mag_db = -INFINITY;
+  float max_mag = 0;
   for (int i = 0; i < num_samples; i++) {
     // Convert from I2S 24-bit data to voltage
-    float real = fft_arr[2 * i] * I2S_VOLTAGE_CONV;
-    float imag = fft_arr[2 * i + 1] * I2S_VOLTAGE_CONV;
+    float real = fft_arr[2 * i];
+    float imag = fft_arr[2 * i + 1];
 
-    float mag_raw = sqrtf((real * real) + (imag * imag));
+    fft_mag[i] = sqrtf((real * real) + (imag * imag));
 
-    fft_mag[i] = 20 * log10f(mag_raw);
     // Store maximum magnitude
-    if (fft_mag[i] > max_mag_db) max_mag_db = fft_mag[i];
+    if (fft_mag[i] > max_mag) max_mag = fft_mag[i];
+  }
+  return max_mag;
+}
+
+float conv_i2s_to_db(float i2s_raw)
+{
+  return 20 * log10f(i2s_raw * I2S_VOLTAGE_CONV);
+}
+
+float calc_fft_mag_db(float* fft_arr, float* fft_mag, int num_samples)
+{
+  float max_mag_raw = calc_fft_mag_raw(fft_arr, fft_mag, num_samples);
+
+  // Convert raw magnitudes to dB
+  for (int i = 0; i < num_samples; i++)
+  {
+    fft_mag[i] = conv_i2s_to_db(fft_mag[i]);
   }
 
-  // Return maximum magnitude
-  return max_mag_db;
+  // Return maximum magnitude, converted to dB
+  return conv_i2s_to_db(max_mag_raw);
 }
 
 float get_idx_phase(float* fft_arr, int idx)
@@ -4190,8 +4207,8 @@ float get_idx_phase(float* fft_arr, int idx)
 
   // Ensure there is no divide-by-zero operation
   if (imag == 0) return 0.0; // Same as atan(0)
-  if (real == 0) return M_PI / 2; // Exact result of atan(inf)
-  return atanf(imag / real);
+  if (real == 0) return M_PI_2; // Exact result of atan(inf)
+  return atanFast(imag / real);
 }
 
 void calc_fft_phase(float* fft_arr, float* fft_phase, int num_samples)
@@ -4217,8 +4234,8 @@ void divide_complex(float x_real, float x_imag, float y_real, float y_imag, floa
 void polar_to_complex(float mag, float angle, float* cpx_real, float* cpx_imag)
 {
   // Real is the cosine of the angle, imaginary the sine
-  *cpx_real = mag * cosf(angle);
-  *cpx_imag = mag * cosf(angle);
+  *cpx_real = mag * icos(angle);
+  *cpx_imag = mag * isin(angle);
 }
 
 float get_window(int idx)

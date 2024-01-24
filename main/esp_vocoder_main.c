@@ -46,10 +46,7 @@
  * @param txBuffer - Output buffer for modified sound data for transmission
  */
 void audio_data_modification() {
-    static vocoder_mode_e prev_vocoder_mode = MOD_CHORUS;
-    static unsigned silence_count = 0;
-
-    // Copy in previous input FFT
+    // Copy previous input frame FFT
     memcpy(prev_rx_FFT, rx_FFT, sizeof(prev_rx_FFT));
 
     // Copy values of rxBuffer into FFT buffer
@@ -66,10 +63,15 @@ void audio_data_modification() {
     // FFT Calculation
     ESP_ERROR_CHECK(calc_fft(rx_FFT, N));
 
-    // Magnitude calculation
-    float max_mag_db = calc_fft_mag_db(rx_FFT, rx_FFT_mag, FFT_MOD_SIZE);
+    // Calculate magnitude and phase
+    float max_mag_db = conv_i2s_to_db(calc_fft_mag_raw(rx_FFT, rx_FFT_mag_raw, FFT_MOD_SIZE));
+    for (int i = 0; i < FFT_MOD_SIZE; i++)
+    {
+        rx_FFT_mag_db[i] = conv_i2s_to_db(rx_FFT_mag_raw[i]);
+    }
+
     // Change to raw log for true env calculation
-    dsps_mulc_f32(rx_FFT_mag, rx_FFT_mag, FFT_MOD_SIZE, 0.05, 1, 1);
+    dsps_mulc_f32(rx_FFT_mag_db, rx_FFT_mag_db, FFT_MOD_SIZE, 0.05, 1, 1);
 
     // Find peaks
     int num_peaks = find_local_peaks();
@@ -77,7 +79,7 @@ void audio_data_modification() {
     num_peaks_sum += num_peaks;
 
     // Calculate true envelope, using fundamental frequency estimate from peak finding
-    calc_true_envelope(rx_FFT_mag, rx_env, est_fundamental_freq());
+    calc_true_envelope(rx_FFT_mag_db, rx_env, est_fundamental_freq());
     // Convert to raw from log for pre-warping
     for (int i = 0; i < FFT_MOD_SIZE; i++) {
         rx_env[i] = pow10f(rx_env[i]);
@@ -85,30 +87,11 @@ void audio_data_modification() {
         rx_env_inv[i] = 1 / rx_env[i];
     }
     // Return to using dB in mag plot
-    dsps_mulc_f32(rx_FFT_mag, rx_FFT_mag, FFT_MOD_SIZE, 20, 1, 1);
+    dsps_mulc_f32(rx_FFT_mag_db, rx_FFT_mag_db, FFT_MOD_SIZE, 20, 1, 1);
 
     // Perform peak shift, if there are any peaks
     // First get mode mutex
     xSemaphoreTake(xModeSwitchMutex, 10 / portTICK_PERIOD_MS); // Wait very little time to prevent latency
-
-    // Conditions for resetting phase
-    if (prev_vocoder_mode != vocoder_mode) {
-        // Reset phase compensation array on mode switch
-        reset_phase_comp_arr(run_phase_comp);
-        // Reset silence count
-        silence_count = 0;
-    } else if (max_mag_db < NOISE_THRESHOLD_DB) {
-        // Reset array if near silence (below threshold) base on counter
-        silence_count++;
-        if (silence_count % SILENCE_RESET_COUNT == 0) {
-            reset_phase_comp_arr(run_phase_comp);
-            phase_reset_count++;
-        }
-    } else {
-        // Reset silence count
-        silence_count = 0;
-    }
-    // Otherwise, leave running
 
     switch (vocoder_mode) {
         case MOD_CHORUS: {
@@ -116,34 +99,34 @@ void audio_data_modification() {
             memcpy(tx_iFFT, rx_FFT, FFT_MOD_SIZE * 2 * sizeof(float));
             // Perform full chorus shift for the rest
             for (int i = 0; i < NUM_PITCH_SHIFTS; i++) {
-                shift_peaks(PITCH_SHIFT_FACTORS[i], PITCH_SHIFT_GAINS[i], run_phase_comp);
+                shift_peaks(PITCH_SHIFT_FACTORS[i], PITCH_SHIFT_GAINS[i]);
             }
             break;
         }
         case MOD_LOW: {
-            shift_peaks(LOW_EFFECT_SHIFT, LOW_EFFECT_GAIN, run_phase_comp);
+            shift_peaks(LOW_EFFECT_SHIFT, LOW_EFFECT_GAIN);
             break;
         }
         case MOD_HIGH: {
-            shift_peaks(HIGH_EFFECT_SHIFT, HIGH_EFFECT_GAIN, run_phase_comp);
+            shift_peaks(HIGH_EFFECT_SHIFT, HIGH_EFFECT_GAIN);
             break;
         }
         case PASSTHROUGH: {
             // NOTE: this could just be another copy situation
-            shift_peaks(PASSTHROUGH_SHIFT, PASSTHROUGH_GAIN, run_phase_comp);
+            shift_peaks(PASSTHROUGH_SHIFT, PASSTHROUGH_GAIN);
             break;
         }
         default: {
             // Copy in original sound, reset running phase comp
             memcpy(tx_iFFT, rx_FFT, FFT_MOD_SIZE * 2 * sizeof(float));
-            reset_phase_comp_arr(run_phase_comp);
-            phase_reset_count++;
         }
     }
-    // Save previous mode
-    prev_vocoder_mode = vocoder_mode;
+
     // Give mutex
     xSemaphoreGive(xModeSwitchMutex);
+
+    // Calculate phase for next frame
+    calc_fft_phase(tx_iFFT, tx_FFT_prev_phase, FFT_MOD_SIZE);
 
     // Fill latter half of FFT with conjugate mirror data
     fill_mirror_fft(tx_iFFT, N);
@@ -236,6 +219,8 @@ static IRAM_ATTR bool tx_sent_overflow(i2s_chan_handle_t handle, i2s_event_data_
 void proc_audio_data(void* pvParameters)
 {
     static const char* TAG = "Audio DSP";
+    static int long_calc_err_count = 0;
+
 
     // Register with WDT
     esp_task_wdt_add(NULL);
@@ -264,7 +249,7 @@ void proc_audio_data(void* pvParameters)
         // If this is failed, then the audio will be choppy
         if (iter_calc_time > 1.5 * I2S_BUFFER_TIME_MS) {
             ESP_LOGE(TAG, "DSP calculation time too long! Should be <= %.1f ms, is instead %.3f", I2S_BUFFER_TIME_MS, iter_calc_time);
-            configASSERT(false);
+            configASSERT(++long_calc_err_count < LONG_CALC_ERROR_MAX);
         }
         else if (iter_calc_time > I2S_BUFFER_TIME_MS) {
             // Just issue warning
@@ -401,7 +386,7 @@ void print_task_stats(void* pvParameters)
         print_local_peaks();
 
         // Copy magnitude buffers
-        // memcpy(rx_FFT_mag_cpy, rx_FFT_mag, PLOT_LEN * sizeof(float));
+        // memcpy(rx_FFT_mag_cpy, rx_FFT_mag_db, PLOT_LEN * sizeof(float));
         // memcpy(tx_FFT_mag_cpy, tx_FFT_mag, PLOT_LEN * sizeof(float));
 
         // Plot magnitudes
@@ -520,19 +505,17 @@ void app_main(void)
 
     // Set peak shift algorithm config
     peak_shift_cfg_t cfg = {
-        .hop_size    = HOP_SIZE,
-        .bin_freq_step = 1.0 * I2S_SAMPLING_FREQ_HZ / N_SAMPLES,
-        .fft_ptr = rx_FFT,
-        .fft_prev_ptr = prev_rx_FFT,
-        .fft_mag_ptr = rx_FFT_mag,
-        .fft_out_ptr = tx_iFFT,
-        .true_env_ptr = rx_env,
-        .inv_env_ptr  = rx_env_inv,
+        .bin_freq_step      = 1.0 * I2S_SAMPLING_FREQ_HZ / N_SAMPLES,
+        .fft_ptr            = rx_FFT,
+        .fft_prev           = prev_rx_FFT,
+        .fft_mag_db         = rx_FFT_mag_db,
+        .fft_mag_raw        = rx_FFT_mag_raw,
+        .fft_out_ptr        = tx_iFFT,
+        .fft_out_prev_phase = tx_FFT_prev_phase,
+        .true_env_ptr       = rx_env,
+        .inv_env_ptr        = rx_env_inv,
     };
     init_peak_shift_cfg(&cfg);
-
-    // Reset phase compensation buffer
-    reset_phase_comp_arr(run_phase_comp);
 
     // Config true envelope calculation
     config_true_env_calc(env_FFT, cepstrum_buff, I2S_SAMPLING_FREQ_HZ);

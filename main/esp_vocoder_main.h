@@ -49,9 +49,12 @@ int N = N_SAMPLES;
 __attribute__((aligned(16))) float rx_FFT[N_SAMPLES * 2]; // Will be complex
 __attribute__((aligned(16))) float tx_iFFT[N_SAMPLES * 2];
 __attribute__((aligned(16))) float prev_rx_FFT[FFT_MOD_SIZE * 2]; // For inst freq calc
+
 // Peak shift buffers
-float rx_FFT_mag[FFT_MOD_SIZE]; // Needed for peak shifting
-float run_phase_comp[2 * FFT_MOD_SIZE]; // Cumulative phase compensation buffer
+float rx_FFT_mag_raw[FFT_MOD_SIZE];
+float rx_FFT_mag_db[FFT_MOD_SIZE];
+float tx_FFT_prev_phase[FFT_MOD_SIZE];
+
 // True envelope buffers
 // Use tx_iFFT to save memory for envelope FFT/cepstrum buffers
 float* env_FFT = tx_iFFT;
@@ -62,6 +65,7 @@ float rx_env_inv[FFT_MOD_SIZE]; // Inverse for ratio calc
 
 #define NOISE_THRESHOLD_DB (14) // Empirical
 #define SILENCE_RESET_COUNT (5) // ~every quarter second
+#define LONG_CALC_ERROR_MAX (10) // Number of errors tolerated before crashing
 
 // TX/RX buffers
 #define DELAY_TAP_SIZE   (0) // No delay tap for now

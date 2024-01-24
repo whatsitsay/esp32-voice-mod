@@ -59,6 +59,16 @@ void fill_mirror_fft(float* fft_arr, int num_samples);
 esp_err_t inv_fft(float* fft_arr, int num_samples);
 
 /**
+ * @brief Calculate and store magnitudes for FFT array based on raw values
+ * 
+ * @param fft_arr - FFT array (input)
+ * @param fft_mag - FFT magnitudes  (output)
+ * @param num_samples - Number of samples in array
+ * @return float - Maximum magnitude of samples
+ */
+float calc_fft_mag_raw(float* fft_arr, float* fft_mag, int num_samples);
+
+/**
  * @brief Calculate and store magnitudes for FFT array in dB
  * 
  * @param fft_arr - FFT array (input)
@@ -67,6 +77,14 @@ esp_err_t inv_fft(float* fft_arr, int num_samples);
  * @return float - Maximum magnitude of samples (in dB)
  */
 float calc_fft_mag_db(float* fft_arr, float* fft_mag, int num_samples);
+
+/**
+ * @brief Helper function for converting raw value from I2S stream to dB based on voltage
+ * 
+ * @param raw_i2s - I2S raw value
+ * @return float - dB based on voltage
+ */
+float conv_i2s_to_db(float raw_i2s);
 
 /**
  * @brief Calculate the FFT phase at the given index
