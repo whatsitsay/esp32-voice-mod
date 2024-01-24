@@ -4208,7 +4208,7 @@ float get_idx_phase(float* fft_arr, int idx)
   // Ensure there is no divide-by-zero operation
   if (imag == 0) return 0.0; // Same as atan(0)
   if (real == 0) return M_PI_2; // Exact result of atan(inf)
-  return atanFast(imag / real);
+  return atan2Fast(imag, real);
 }
 
 void calc_fft_phase(float* fft_arr, float* fft_phase, int num_samples)

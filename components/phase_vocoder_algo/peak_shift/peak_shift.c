@@ -174,19 +174,18 @@ void shift_peaks(float shift_factor, float shift_gain)
 
     // Calculate the desired change in frequency based on the peak instantaneous
     // frequency and the shift factor
-    volatile float delta_f = (shift_factor - 1) * inst_freq;
+    float delta_f = (shift_factor - 1) * inst_freq;
     // Calculate fractional bin
-    volatile float frac_bin = delta_f / peak_shift_cfg->bin_freq_step;
+    float frac_bin = delta_f / peak_shift_cfg->bin_freq_step;
 
     // Round to get the index shift for this ROI
-    volatile int idx_shift = (int)roundf(frac_bin);
+    int idx_shift = (int)roundf(frac_bin);
     int new_roi_start = left_bound + idx_shift;
     int new_roi_end   = right_bound + idx_shift;
 
     // Calculate phase remainder based on integer frequency shift and fractional bin
     // Assumes 50% overlap
-    volatile float phase_remainder = M_PI * (frac_bin - (float)idx_shift);
-    phase_remainder += 0;
+    float phase_remainder = M_PI * (frac_bin - (float)idx_shift);
 
     // Iterate through ROI
     // Increment by 2's for complex values
@@ -198,12 +197,12 @@ void shift_peaks(float shift_factor, float shift_gain)
                     j; // Use index as-is
       bool hit_boundary = new_idx != j;
       // Store bin indeces
-      int new_bin_idx = new_idx / 2;
+      int new_bin_idx = new_idx >> 1; // divide by 2
       int old_bin_idx = new_bin_idx - idx_shift;
 
       // Calculate new phase, wrapping around 2pi
       float prev_phase = peak_shift_cfg->fft_out_prev_phase[new_bin_idx];
-      float new_phase = prev_phase + phase_remainder + HOP_PHASE_CORRECTION(new_bin_idx);
+      float new_phase = fmodf(prev_phase + phase_remainder + HOP_PHASE_CORRECTION(new_bin_idx), 2 * M_PI);
 
       // Calculate real and imaginary components pre gain correction
       float raw_mag  = peak_shift_cfg->fft_mag_raw[old_bin_idx];
