@@ -31,18 +31,13 @@
 #define IDX_CORR_SIZE ((2 * TRANSITION_BANDWIDTH * ENVELOPE_ASYMPTOTE_MAX) + 1)
 #define IDX_CORR_FUNDAMENTAL (TRANSITION_BANDWIDTH * ENVELOPE_ASYMPTOTE_MAX)
 
-// Hop phase correction for 50% overlap
-// Derived from the formula (2pikH)/N, where H/N==0.5=> pi*k, for multiples of 2pi
-#define HOP_PHASE_CORRECTION(k) ((k % 2) ? M_PI : 0)
-
 typedef struct {
+  int hop_size;               // Hop size of analysis
   float bin_freq_step;        // Frequency increment per bin of FFT array (sampling freq/N)
   float* fft_ptr;             // Pointer to input FFT array of current frame (size 2*N)
-  float* fft_prev;            // Previous frame FFT
-  float* fft_mag_db;          // Pointer to input FFT dB magnitude array of current frame (size N/2+1)
-  float* fft_mag_raw;         // Pointer to input FFT magnitude array (raw values)
+  float* fft_prev_ptr;        // Pointer to input FFT array of previous frame (size N+2)
+  float* fft_mag_ptr;         // Pointer to input FFT magnitude array of current frame (size N/2+1)
   float* fft_out_ptr;         // Pointer to output FFT (size 2*N)
-  float* fft_out_prev_phase;  // Pointer to output FFT phase for the previous frame (size N/2 + 1)
   float* true_env_ptr;        // Pointer to true envelope buffer (calculated externally)
   float* inv_env_ptr;         // Pointer to inverse of true envelope (i.e. 1/true_env above)
 } peak_shift_cfg_t;
@@ -56,6 +51,17 @@ typedef struct {
  *              relevant arrays
  */
 void init_peak_shift_cfg(peak_shift_cfg_t* cfg);
+
+/**
+ * @brief Reset cumulative phase compensation array
+ * 
+ * Sets all complex values to 1 + 0j
+ * Needs to be a pointer in the case of chorus effect (multiple pitch shifts)
+ * 
+ * @param run_phase_comp_ptr - Pointer to running phase compensation array.
+ *                             Should be cfg->num_samples in length
+ */
+void reset_phase_comp_arr(float* run_phase_comp_ptr);
 
 /**
  * @brief Locate peaks within FFT magnitude plot
@@ -103,7 +109,8 @@ float est_fundamental_freq(void);
  * 
  * @param shift_factor - Factor by which to shift frequency data
  * @param gain - Gain applied to shifted peaks
+ * @param run_phase_comp_ptr - Pointer to array containing running phase rotation data
  */
-void shift_peaks(float shift_factor, float gain);
+void shift_peaks(float shift_factor, float gain, float* run_phase_comp_ptr);
 
 #endif // __PEAK_SHIFT__
