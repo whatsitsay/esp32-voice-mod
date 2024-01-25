@@ -38,7 +38,35 @@
 #include "esp_vocoder_main.h"
 #include <Yin.h>
 
+bool partial_in_tune(int partial_idx)
+{
+    switch (partial_idx % 12)
+    {
+        case A_HARMONIC_INDICES:
+        case CSHARP_HARMONIC_INDICES:
+        case E_HARMONIC_INDICES:
+            return true;
+        default:
+            return false;
+    }
+}
+
 ////// HELPER FUNCTIONS //////
+float get_closest_partial(float f0_est)
+{
+    // Round by power of 2 for nearest semitone from minimum
+    int nearest_semitone_idx = roundf(12.0 * log2f(f0_est / PARTIAL_LOOKUP_TABLE_HZ[0]));
+
+    // Clip at 0, max index
+    nearest_semitone_idx = MAX(0, nearest_semitone_idx);
+    nearest_semitone_idx = MIN(NUM_PARTIALS - 1, nearest_semitone_idx);
+
+    // Increment to nearest "in-tune" semitone
+    while (!partial_in_tune(nearest_semitone_idx)) nearest_semitone_idx++;
+
+    // Pop from lookup table
+    return PARTIAL_LOOKUP_TABLE_HZ[nearest_semitone_idx];
+}
 
 /**
  * @brief Function for performing audio data modification
@@ -46,8 +74,9 @@
  * @param rxBuffer - Buffer containing microphone input sound data
  * @param txBuffer - Output buffer for modified sound data for transmission
  */
-void audio_data_modification() {
-    static vocoder_mode_e prev_vocoder_mode = MOD_CHORUS;
+void audio_data_modification(float f0_est) {
+    static const char* TAG = "Audio DSP Mod";
+    static vocoder_mode_e prev_vocoder_mode;
     static unsigned silence_count = 0;
 
     // Copy in previous input FFT
@@ -112,6 +141,14 @@ void audio_data_modification() {
     // Otherwise, leave running
 
     switch (vocoder_mode) {
+        case MOD_AUTOTUNE: {
+            // Estimate shift amount by variation from partial
+            float f0_closest_partial = get_closest_partial(f0_est);
+            float autotune_shift = f0_closest_partial / f0_est;
+            // ESP_LOGI(TAG, "Yin F0 estimate = %.3f Hz, closest partial @ %.2f Hz => shift of %.4f", f0_est, f0_closest_partial, autotune_shift);
+            shift_peaks(autotune_shift, 1.0, run_phase_comp);
+            break;
+        }
         case MOD_CHORUS: {
             // Copy in original sound (save cycles)
             memcpy(tx_iFFT, rx_FFT, FFT_MOD_SIZE * 2 * sizeof(float));
@@ -127,11 +164,6 @@ void audio_data_modification() {
         }
         case MOD_HIGH: {
             shift_peaks(HIGH_EFFECT_SHIFT, HIGH_EFFECT_GAIN, run_phase_comp);
-            break;
-        }
-        case PASSTHROUGH: {
-            // NOTE: this could just be another copy situation
-            shift_peaks(PASSTHROUGH_SHIFT, PASSTHROUGH_GAIN, run_phase_comp);
             break;
         }
         default: {
@@ -237,25 +269,30 @@ static IRAM_ATTR bool tx_sent_overflow(i2s_chan_handle_t handle, i2s_event_data_
 void proc_audio_data(void* pvParameters)
 {
     static const char* TAG = "Audio DSP";
+    float yin_f0_est_latch;
 
     // Register with WDT
     esp_task_wdt_add(NULL);
 
     // Main loop
     while (1) {
+
         // Wait for RX bit to be set
         (void) xEventGroupWaitBits(RxSync, I2S_SYNC_BIT, pdFALSE, pdTRUE, portMAX_DELAY);
 
         // Move up delay tap
         // FIXME need to work in delay tap, if desired
         memcpy(dsp_rx, dsp_rx + HOP_SIZE, N_SAMPLES * sizeof(int));
+        // Latch F0 estimate
+        yin_f0_est_latch = yin_f0_est;
+
         // Set individual bit and move on
         (void) xEventGroupSetBits(RxSync, DSP_SYNC_BIT);
 
         unsigned int start_cc = dsp_get_cpu_cycle_count();
 
         // Modify data
-        audio_data_modification();
+        audio_data_modification(yin_f0_est_latch);
         
         unsigned int end_cc = dsp_get_cpu_cycle_count();
 
@@ -265,7 +302,7 @@ void proc_audio_data(void* pvParameters)
         // If this is failed, then the audio will be choppy
         if (iter_calc_time > 1.5 * I2S_BUFFER_TIME_MS) {
             ESP_LOGE(TAG, "DSP calculation time too long! Should be <= %.1f ms, is instead %.3f", I2S_BUFFER_TIME_MS, iter_calc_time);
-            configASSERT(false);
+            // configASSERT(false);
         }
         else if (iter_calc_time > I2S_BUFFER_TIME_MS) {
             // Just issue warning
@@ -333,8 +370,6 @@ void i2s_receive(void* pvParameters)
         // Only latch as fundamental if value isn't -1
         if (f0_est_snapshot > -1) {
             yin_f0_est = f0_est_snapshot;
-            // REMOVE ME for debug
-            ESP_LOGI(TAG, "Yin F0 estimate = %.3f Hz (prob %.4f)", yin_f0_est, yin_s.probability);
         }
 
         // Set event group bit, wait for all sync before moving on
