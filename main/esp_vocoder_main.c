@@ -425,7 +425,7 @@ void print_task_stats(void* pvParameters)
     const char* TAG = "Task Stats";
 
     while (1) {
-        vTaskDelay(5000 / portTICK_PERIOD_MS);
+        vTaskDelay(2000 / portTICK_PERIOD_MS);
 
         // Calculate average time spent doing DSP calculations in ms
         float dsp_calc_time_avg = dsp_calc_time_sum / loop_count;

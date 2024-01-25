@@ -15,6 +15,8 @@
 #include "Yin.h"
 #include "algo_common.h"
 
+#define YIN_DIFF_STEP (2)
+
 /* ------------------------------------------------------------------------------------------
 --------------------------------------------------------------------------- PRIVATE FUNCTIONS
 -------------------------------------------------------------------------------------------*/
@@ -32,7 +34,7 @@ void Yin_difference(Yin *yin, int* buffer){
     unsigned total = 0;
 		/* Take the difference of the signal with a shifted version of itself, then square it.
 		 * (This is the Yin algorithm's tweak on autocorellation) */ 
-		for(uint16_t i = 0; i < yin->halfBufferSize; i += 4){
+		for(uint16_t i = 0; i < yin->halfBufferSize; i += YIN_DIFF_STEP){
 			int delta_int = buffer[i] - buffer[i + tau];
       // Store in int16 to save space, bitshifting difference down with sign extension
       int16_t delta = (delta_int >> 16) | ((delta_int < 0) ? 0xFFFF8000 : 0x0);
