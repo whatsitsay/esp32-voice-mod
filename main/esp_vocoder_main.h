@@ -63,21 +63,12 @@ float rx_env[FFT_MOD_SIZE];
 float rx_env_inv[FFT_MOD_SIZE]; // Inverse for ratio calc
 
 // Yin pitch detection
-#define YIN_SAMPLES (1024) // Significantly reduced to reduce calc time
+#define YIN_SAMPLES (HOP_SIZE) 
 static Yin yin_s;
 static float yinBuffPtr[YIN_SAMPLES / 2];
-float fundamental_freq_est;
-int fundamental_freq_idx;
-#define F0_EST_FB_FACTOR (0.05) // Feedback factor for LPF
-#define CEPSTRUM_BUFF    (50) // Extra buffer for cepstrum smoothing
+float yin_f0_est;
 
-// Yin pitch detection
-#define YIN_SAMPLES (1024) // Significantly reduced to reduce calc time
-static Yin yin_s;
-static float yinBuffPtr[YIN_SAMPLES / 2];
-float fundamental_freq_est;
-
-#define NOISE_THRESHOLD_DB (7) // Empirical
+#define NOISE_THRESHOLD_DB (14) // Empirical
 #define SILENCE_RESET_COUNT (5) // ~every quarter second
 
 // TX/RX buffers

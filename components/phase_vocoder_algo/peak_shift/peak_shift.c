@@ -149,7 +149,7 @@ float _get_true_env_correction(int old_idx, int new_idx)
   return true_env_gain;
 }
 
-void shift_peaks(float shift_factor, float shift_gain, int f0_est_idx, float* run_phase_comp_ptr)
+void shift_peaks(float shift_factor, float shift_gain, float* run_phase_comp_ptr)
 {
   // First check if unity.
   // If so, simply add to output FFT
@@ -241,10 +241,9 @@ void shift_peaks(float shift_factor, float shift_gain, int f0_est_idx, float* ru
       // If new index is below the estimated fundamental, just apply unity gain instead
       // If it's equivalent, go half-and-half
       // FIXME: might be worth having some sort of linear slope when below fundamental, instead of hard cliff
-      int new_bin_idx = new_idx / 2;
-      float true_env_corr = (new_bin_idx > f0_est_idx)  ? _get_true_env_correction(orig_idx / 2, new_bin_idx) : // Use filter as-is
-                            (new_bin_idx == f0_est_idx) ? _get_true_env_correction(orig_idx / 2, new_bin_idx) * 0.5 + 0.5 : // Half filter value, half unity
-                            1; // new_bin_idx < f0_est_idx => use unity gain, ie no true envelope correction to avoid zero-ing out
+      int new_bin_idx  = new_idx / 2;
+      int orig_bin_idx = orig_idx / 2;
+      float true_env_corr = _get_true_env_correction(orig_bin_idx, new_bin_idx);
 
       // Add to output FFT at new index, now applying shift_gain and true envelope correction
       // to both real and imaginary components

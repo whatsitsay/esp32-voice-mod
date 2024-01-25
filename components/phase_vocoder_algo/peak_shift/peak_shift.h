@@ -109,9 +109,8 @@ float est_fundamental_freq(void);
  * 
  * @param shift_factor - Factor by which to shift frequency data
  * @param gain - Gain applied to shifted peaks
- * @param f0_est_idx - Index of the estimated fundamental frequency
  * @param run_phase_comp_ptr - Pointer to array containing running phase rotation data
  */
-void shift_peaks(float shift_factor, float gain, int f0_est_idx, float* run_phase_comp_ptr);
+void shift_peaks(float shift_factor, float gain, float* run_phase_comp_ptr);
 
 #endif // __PEAK_SHIFT__
