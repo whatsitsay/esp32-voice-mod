@@ -79,7 +79,7 @@ float get_closest_partial(float f0_est)
  * @param txBuffer - Output buffer for modified sound data for transmission
  */
 void audio_data_modification(float f0_est) {
-    static const char* TAG = "Audio DSP Mod";
+    // static const char* TAG = "Audio DSP Mod";
     static vocoder_mode_e prev_vocoder_mode;
     static unsigned silence_count = 0;
 
@@ -128,14 +128,14 @@ void audio_data_modification(float f0_est) {
     // Conditions for resetting phase
     if (prev_vocoder_mode != vocoder_mode) {
         // Reset phase compensation array on mode switch
-        reset_phase_comp_arr(run_phase_comp);
+        RESET_TX_PHASE;
         // Reset silence count
         silence_count = 0;
     } else if (max_mag_db < NOISE_THRESHOLD_DB) {
         // Reset array if near silence (below threshold) base on counter
         silence_count++;
         if (silence_count % SILENCE_RESET_COUNT == 0) {
-            reset_phase_comp_arr(run_phase_comp);
+            RESET_TX_PHASE;
             phase_reset_count++;
         }
     } else {
@@ -150,7 +150,7 @@ void audio_data_modification(float f0_est) {
             float f0_closest_partial = get_closest_partial(f0_est);
             float autotune_shift = f0_closest_partial / f0_est;
             // ESP_LOGI(TAG, "Yin F0 estimate = %.3f Hz, closest partial @ %.2f Hz => shift of %.4f", f0_est, f0_closest_partial, autotune_shift);
-            shift_peaks(autotune_shift, 1.0, run_phase_comp);
+            shift_peaks(autotune_shift, 1.0);
             break;
         }
         case MOD_CHORUS: {
@@ -158,22 +158,22 @@ void audio_data_modification(float f0_est) {
             memcpy(tx_iFFT, rx_FFT, FFT_MOD_SIZE * 2 * sizeof(float));
             // Perform full chorus shift for the rest
             for (int i = 0; i < NUM_PITCH_SHIFTS; i++) {
-                shift_peaks(PITCH_SHIFT_FACTORS[i], PITCH_SHIFT_GAINS[i], run_phase_comp);
+                shift_peaks(PITCH_SHIFT_FACTORS[i], PITCH_SHIFT_GAINS[i]);
             }
             break;
         }
         case MOD_LOW: {
-            shift_peaks(LOW_EFFECT_SHIFT, LOW_EFFECT_GAIN, run_phase_comp);
+            shift_peaks(LOW_EFFECT_SHIFT, LOW_EFFECT_GAIN);
             break;
         }
         case MOD_HIGH: {
-            shift_peaks(HIGH_EFFECT_SHIFT, HIGH_EFFECT_GAIN, run_phase_comp);
+            shift_peaks(HIGH_EFFECT_SHIFT, HIGH_EFFECT_GAIN);
             break;
         }
         default: {
             // Copy in original sound, reset running phase comp
             memcpy(tx_iFFT, rx_FFT, FFT_MOD_SIZE * 2 * sizeof(float));
-            reset_phase_comp_arr(run_phase_comp);
+            RESET_TX_PHASE;
             phase_reset_count++;
         }
     }
@@ -181,6 +181,9 @@ void audio_data_modification(float f0_est) {
     prev_vocoder_mode = vocoder_mode;
     // Give mutex
     xSemaphoreGive(xModeSwitchMutex);
+
+    // Calc phase of final output FFT for next frame
+    calc_fft_phase(tx_iFFT, prev_tx_FFT_phase, FFT_MOD_SIZE);
 
     // Fill latter half of FFT with conjugate mirror data
     fill_mirror_fft(tx_iFFT, N);
@@ -308,7 +311,7 @@ void proc_audio_data(void* pvParameters)
             ESP_LOGE(TAG, "DSP calculation time too long! Should be <= %.1f ms, is instead %.3f", I2S_BUFFER_TIME_MS, iter_calc_time);
             // configASSERT(false);
         }
-        else if (iter_calc_time > I2S_BUFFER_TIME_MS) {
+        else if (iter_calc_time > I2S_BUFFER_TIME_MS + 2) {
             // Just issue warning
             ESP_LOGW(TAG, "DSP calculation time a little too long at %.3f ms", iter_calc_time);
         }
@@ -580,13 +583,14 @@ void app_main(void)
         .fft_prev_ptr = prev_rx_FFT,
         .fft_mag_ptr = rx_FFT_mag,
         .fft_out_ptr = tx_iFFT,
+        .fft_out_prev_phase = prev_tx_FFT_phase,
         .true_env_ptr = rx_env,
         .inv_env_ptr  = rx_env_inv,
     };
     init_peak_shift_cfg(&cfg);
 
     // Reset phase compensation buffer
-    reset_phase_comp_arr(run_phase_comp);
+    RESET_TX_PHASE;
 
     // Config true envelope calculation
     config_true_env_calc(env_FFT, cepstrum_buff, I2S_SAMPLING_FREQ_HZ);

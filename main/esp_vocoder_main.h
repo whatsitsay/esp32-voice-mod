@@ -53,7 +53,9 @@ __attribute__((aligned(16))) float tx_iFFT[N_SAMPLES * 2];
 __attribute__((aligned(16))) float prev_rx_FFT[FFT_MOD_SIZE * 2]; // For inst freq calc
 // Peak shift buffers
 float rx_FFT_mag[FFT_MOD_SIZE]; // Needed for peak shifting
-float run_phase_comp[FFT_MOD_SIZE * 2]; // Cumulative phase compensation buffer
+float prev_tx_FFT_phase[FFT_MOD_SIZE]; // Needed for phase propagation
+// Helper for resetting previous TX phase (same as zero-ing out running comp)
+#define RESET_TX_PHASE (memset(prev_tx_FFT_phase, 0, FFT_MOD_SIZE * sizeof(float)))
 // True envelope buffers
 // Use tx_iFFT to save memory for envelope FFT/cepstrum buffers
 float* env_FFT = tx_iFFT;
@@ -68,8 +70,8 @@ static Yin yin_s;
 static float yinBuffPtr[YIN_SAMPLES / 2];
 float yin_f0_est;
 
-#define NOISE_THRESHOLD_DB (14) // Empirical
-#define SILENCE_RESET_COUNT (5) // ~every quarter second
+#define NOISE_THRESHOLD_DB  (14) // Empirical
+#define SILENCE_RESET_COUNT (10) // every quarter second
 
 // TX/RX buffers
 #define DELAY_TAP_SIZE   (0) // No delay tap for now
