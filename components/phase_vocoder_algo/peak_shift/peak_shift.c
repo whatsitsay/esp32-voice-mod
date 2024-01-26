@@ -41,23 +41,10 @@ const char* TAG = "Peak Shift Algorithm";
 void init_peak_shift_cfg(peak_shift_cfg_t* cfg)
 {
   peak_shift_cfg = cfg;
-
-  // Initialize index correction lut
-  // TODO: disabled for now until artifacts removed
-  // for (int k = 0; k < IDX_CORR_SIZE; k++)
-  // {
-  //   // As per Roebel/Rodet, the index correction factor is defined as:
-  //   // 1 - 1/(1 + exp((k - k0)/Tk)), where:
-  //   // - k is the index
-  //   // - k0 is the fundamental frequency approx index
-  //   // - Tk is the transition bandwidth
-  //   _index_correction_lut[k] = 1/(1 + exp((float)(k - IDX_CORR_FUNDAMENTAL)/TRANSITION_BANDWIDTH));
-  // }
 }
 
 void reset_phase_comp_arr(float* run_phase_comp_ptr)
 {
-  // Increment by two for real + imag
   for (int i = 0; i <= FFT_MOD_SIZE * 2; i += 2)
   {
     run_phase_comp_ptr[i]   = 1;
@@ -158,19 +145,8 @@ void print_local_peaks(void)
 
 float _get_true_env_correction(int old_idx, int new_idx)
 {
-  // TODO: removed index correction until artifacts can be removed at higher frequencies
-  // Calc distance from fundamental
-  // volatile int distance_from_fundamental = old_idx - _fundamental_freq_idx;
-  // volatile int correction_lut_idx = distance_from_fundamental + IDX_CORR_FUNDAMENTAL_CONST;
-  // // Calc index correction factor D(k) using LUT
-  // volatile float idx_corr_factor = (correction_lut_idx < 0) ? 1 : // Asymptote for x < fundamental 
-  //                         (correction_lut_idx >= IDX_CORR_SIZE_CONST) ? 0 : // Asymptote for x > fundamental
-  //                         _index_correction_lut[correction_lut_idx];
-  // // Estimate new index
-  // volatile int new_idx = roundf((idx_corr_factor + ((1 - idx_corr_factor) * shift_factor)) * old_idx);
-  // // Correct for reflection
-  // new_idx = (new_idx < 0) ? -1 * new_idx : (new_idx > NYQUIST_FREQ_IDX) ? NYQUIST_FREQ_IDX - new_idx : new_idx;
-  return peak_shift_cfg->true_env_ptr[new_idx] * peak_shift_cfg->inv_env_ptr[old_idx];
+  float true_env_gain = peak_shift_cfg->true_env_ptr[new_idx] * peak_shift_cfg->inv_env_ptr[old_idx];
+  return true_env_gain;
 }
 
 void shift_peaks(float shift_factor, float shift_gain, float* run_phase_comp_ptr)
@@ -212,10 +188,12 @@ void shift_peaks(float shift_factor, float shift_gain, float* run_phase_comp_ptr
     int new_roi_start = left_bound + idx_shift;
     int new_roi_end   = right_bound + idx_shift;
 
+    // Convert change in freq to radians
+    delta_f *= M_PI / 180.0;
     // Calculate phase compensation for ROI based on freq shift
     float phase_comp_angle = fmod(delta_f * peak_shift_cfg->hop_size, 2 * M_PI);
-    float phase_comp_real  = cosf(phase_comp_angle);
-    float phase_comp_imag  = sinf(phase_comp_angle);
+    float phase_comp_real, phase_comp_imag;
+    polar_to_complex(1, phase_comp_angle, &phase_comp_real, &phase_comp_imag);
 
     // Iterate through ROI
     // Increment by 2's for complex values
@@ -260,7 +238,12 @@ void shift_peaks(float shift_factor, float shift_gain, float* run_phase_comp_ptr
       if (hit_boundary) prod_fft_imag *= -1;
 
       // Calculate true envelope correction based on peak freq shift
-      float true_env_corr = _get_true_env_correction(orig_idx / 2, new_idx / 2);
+      // If new index is below the estimated fundamental, just apply unity gain instead
+      // If it's equivalent, go half-and-half
+      // FIXME: might be worth having some sort of linear slope when below fundamental, instead of hard cliff
+      int new_bin_idx  = new_idx / 2;
+      int orig_bin_idx = orig_idx / 2;
+      float true_env_corr = _get_true_env_correction(orig_bin_idx, new_bin_idx);
 
       // Add to output FFT at new index, now applying shift_gain and true envelope correction
       // to both real and imaginary components

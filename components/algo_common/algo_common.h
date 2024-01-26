@@ -15,7 +15,7 @@
 #define MAX(x, y) ((x > y) ? x : y)
 #define MIN(x, y) ((x < y) ? x : y)
 
-#define N_SAMPLES (4096) // Number of samples for FFT operations
+#define N_SAMPLES (2048) // Number of samples for FFT operations
 #define FFT_MOD_SIZE (N_SAMPLES/2 + 1) // Number of samples for modification, ie up to Nyquist
 #define I2S_VOLTAGE_CONV (3.576279113e-7) // 3.0 V / max I2S (1 << 23 - 1)
 
@@ -59,6 +59,16 @@ void fill_mirror_fft(float* fft_arr, int num_samples);
 esp_err_t inv_fft(float* fft_arr, int num_samples);
 
 /**
+ * @brief Calculate and store magnitudes for FFT array based on raw values
+ * 
+ * @param fft_arr - FFT array (input)
+ * @param fft_mag - FFT magnitudes  (output)
+ * @param num_samples - Number of samples in array
+ * @return float - Maximum magnitude of samples
+ */
+float calc_fft_mag_raw(float* fft_arr, float* fft_mag, int num_samples);
+
+/**
  * @brief Calculate and store magnitudes for FFT array in dB
  * 
  * @param fft_arr - FFT array (input)
@@ -67,6 +77,14 @@ esp_err_t inv_fft(float* fft_arr, int num_samples);
  * @return float - Maximum magnitude of samples (in dB)
  */
 float calc_fft_mag_db(float* fft_arr, float* fft_mag, int num_samples);
+
+/**
+ * @brief Helper function for converting raw value from I2S stream to dB based on voltage
+ * 
+ * @param raw_i2s - I2S raw value
+ * @return float - dB based on voltage
+ */
+float conv_i2s_to_db(float raw_i2s);
 
 /**
  * @brief Calculate the FFT phase at the given index
@@ -125,17 +143,6 @@ void divide_complex(float x_real, float x_imag, float y_real, float y_imag, floa
  * @param cpx_imag - Imaginary component (output)
  */
 void polar_to_complex(float mag, float angle, float* cpx_real, float* cpx_imag);
-
-/**
- * @brief Get the euler coefficient for the given discrete angle
- * 
- * Automatically corrected for by N_SAMPLES
- * 
- * @param angle_idx - Index of discrete angle
- * @param imag_comp - True if imaginary component, false otherwise
- * @return float - Coefficient value
- */
-float get_euler_coeff(int angle_idx, bool imag_comp);
 
 /**
  * @brief Get window coefficient at the given index

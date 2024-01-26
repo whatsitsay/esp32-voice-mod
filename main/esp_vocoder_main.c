@@ -36,8 +36,41 @@
 #include <gpio_button.h>
 #include <filters.h>
 #include "esp_vocoder_main.h"
+#include <Yin.h>
+
+bool partial_in_tune(int partial_idx)
+{
+    switch (partial_idx % 12)
+    {
+        case A_INDICES:      
+        case B_INDICES:      
+        case CSHARP_INDICES: 
+        case D_INDICES:      
+        case E_INDICES:      
+        case FSHARP_INDICES:
+        case GSHARP_INDICES:
+            return true;
+        default:
+            return false;
+    }
+}
 
 ////// HELPER FUNCTIONS //////
+float get_closest_partial(float f0_est)
+{
+    // Round by power of 2 for nearest semitone from minimum
+    int nearest_semitone_idx = roundf(12.0 * log2f(f0_est / PARTIAL_LOOKUP_TABLE_HZ[0]));
+
+    // Clip at 0, max index
+    nearest_semitone_idx = MAX(0, nearest_semitone_idx);
+    nearest_semitone_idx = MIN(NUM_PARTIALS - 1, nearest_semitone_idx);
+
+    // Increment to nearest "in-tune" semitone
+    while (!partial_in_tune(nearest_semitone_idx)) nearest_semitone_idx++;
+
+    // Pop from lookup table
+    return PARTIAL_LOOKUP_TABLE_HZ[nearest_semitone_idx];
+}
 
 /**
  * @brief Function for performing audio data modification
@@ -45,8 +78,9 @@
  * @param rxBuffer - Buffer containing microphone input sound data
  * @param txBuffer - Output buffer for modified sound data for transmission
  */
-void audio_data_modification(int* rxBuffer, int* txBuffer) {
-    static vocoder_mode_e prev_vocoder_mode = MOD_CHORUS;
+void audio_data_modification(float f0_est) {
+    static const char* TAG = "Audio DSP Mod";
+    static vocoder_mode_e prev_vocoder_mode;
     static unsigned silence_count = 0;
 
     // Copy in previous input FFT
@@ -54,12 +88,11 @@ void audio_data_modification(int* rxBuffer, int* txBuffer) {
 
     // Copy values of rxBuffer into FFT buffer
     for (int i = 0; i < N_SAMPLES; i++) {
-        // Select sample. If first half, use rxBuffer_overlap. Otherwise use rxBuffer
-        int rx_val = (i < HOP_SIZE) ? rxBuffer_overlap[i] : rxBuffer[2 * (i - HOP_SIZE)];
-
+        // Get sample
+        int rx_val = dsp_rx[i];
         // Dot-product with hann window
         // Downshift to prevent overflow (last 8 bits are always 0)
-        rx_FFT[2 * i] = (float)(rx_val >> I2S_DOWNSHIFT) * get_window(i);
+        rx_FFT[2 * i] = (float)(rx_val / I2S_DOWNSHIFT_DIV) * get_window(i);
         // Set imaginary component to 0
         rx_FFT[2 * i + 1] = 0;
     }
@@ -70,14 +103,14 @@ void audio_data_modification(int* rxBuffer, int* txBuffer) {
     // Magnitude calculation
     float max_mag_db = calc_fft_mag_db(rx_FFT, rx_FFT_mag, FFT_MOD_SIZE);
     // Change to raw log for true env calculation
-    dsps_mulc_f32(rx_FFT_mag, rx_FFT_mag, FFT_MOD_SIZE, 0.1, 1, 1);
+    dsps_mulc_f32(rx_FFT_mag, rx_FFT_mag, FFT_MOD_SIZE, 0.05, 1, 1);
 
     // Find peaks
     int num_peaks = find_local_peaks();
 
     num_peaks_sum += num_peaks;
 
-    // Calculate true envelope, using fundamental frequency estimate from peak finding
+    // Calculate true envelope, using peak distance estimate (best results empiracally)
     calc_true_envelope(rx_FFT_mag, rx_env, est_fundamental_freq());
     // Convert to raw from log for pre-warping
     for (int i = 0; i < FFT_MOD_SIZE; i++) {
@@ -86,7 +119,7 @@ void audio_data_modification(int* rxBuffer, int* txBuffer) {
         rx_env_inv[i] = 1 / rx_env[i];
     }
     // Return to using dB in mag plot
-    dsps_mulc_f32(rx_FFT_mag, rx_FFT_mag, FFT_MOD_SIZE, 10, 1, 1);
+    dsps_mulc_f32(rx_FFT_mag, rx_FFT_mag, FFT_MOD_SIZE, 20, 1, 1);
 
     // Perform peak shift, if there are any peaks
     // First get mode mutex
@@ -112,6 +145,14 @@ void audio_data_modification(int* rxBuffer, int* txBuffer) {
     // Otherwise, leave running
 
     switch (vocoder_mode) {
+        case MOD_AUTOTUNE: {
+            // Estimate shift amount by variation from partial
+            float f0_closest_partial = get_closest_partial(f0_est);
+            float autotune_shift = f0_closest_partial / f0_est;
+            // ESP_LOGI(TAG, "Yin F0 estimate = %.3f Hz, closest partial @ %.2f Hz => shift of %.4f", f0_est, f0_closest_partial, autotune_shift);
+            shift_peaks(autotune_shift, 1.0, run_phase_comp);
+            break;
+        }
         case MOD_CHORUS: {
             // Copy in original sound (save cycles)
             memcpy(tx_iFFT, rx_FFT, FFT_MOD_SIZE * 2 * sizeof(float));
@@ -127,11 +168,6 @@ void audio_data_modification(int* rxBuffer, int* txBuffer) {
         }
         case MOD_HIGH: {
             shift_peaks(HIGH_EFFECT_SHIFT, HIGH_EFFECT_GAIN, run_phase_comp);
-            break;
-        }
-        case PASSTHROUGH: {
-            // NOTE: this could just be another copy situation
-            shift_peaks(PASSTHROUGH_SHIFT, PASSTHROUGH_GAIN, run_phase_comp);
             break;
         }
         default: {
@@ -153,17 +189,20 @@ void audio_data_modification(int* rxBuffer, int* txBuffer) {
     ESP_ERROR_CHECK(inv_fft(tx_iFFT, N));
 
     // Fill TX buffer
+    // First half will be overlap-add of previous data and current
     for (int i = 0; i < HOP_SIZE; i++)
     {
-        // Add-overlay beginning portion of iFFT into txBuffer
-        float tx_val = tx_iFFT[2 * i] * get_window(i); // Window result
-        txBuffer[2 * i] = (int)(txBuffer_overlap[i] + tx_val); 
-        txBuffer[2 * i] <<= I2S_DOWNSHIFT; // Increase int value
-        txBuffer[2 * i + 1] = txBuffer[2 * i]; // Copy L and R
-
-        // Store latter portion for use next loop
-        float tx_overlap_val = tx_iFFT[2 * (i + HOP_SIZE)] * get_window(i + HOP_SIZE);
-        txBuffer_overlap[i] = tx_overlap_val;
+        float tx_new     = tx_iFFT[2 * i] * get_window(i); // Window as former half
+        float tx_overlap = dsp_tx[i] * get_window(i + HOP_SIZE); // Window as latter half
+        // Sum for overlap-add
+        dsp_tx[i] = (int)roundf(tx_new + tx_overlap);
+        // Correct for bitshift
+        dsp_tx[i] <<= I2S_DOWNSHIFT;
+    }
+    // Second half will be overlap data
+    for (int i = HOP_SIZE; i < N_SAMPLES; i++)
+    {
+        dsp_tx[i] = (int)roundf(tx_iFFT[2 * i]); // Store as rounded value
     }
 }
 
@@ -176,17 +215,6 @@ void set_mode_leds()
 }
 
 ///// CALLBACKS ///// 
-
-#if configCHECK_FOR_STACK_OVERFLOW == 1
-void vApplicationStackOverflowHook(TaskHandle_t xTask, signed char *pcTaskName) {
-    size_t data_written;
-    // Flush I2S transmit by sending all 0s
-    memset(txBuffers[i2s_idx], 0, HOP_BUFFER_SIZE_B);
-    i2s_channel_write(tx_handle, stream_data, HOP_BUFFER_SIZE_B, &data_written, 1000 / portTICK_PERIOD_MS);
-    // Restart ESP32
-    esp_restart();
-}
-#endif
 
 /**
  * @brief Callback for RX received event. Will send notification
@@ -245,26 +273,30 @@ static IRAM_ATTR bool tx_sent_overflow(i2s_chan_handle_t handle, i2s_event_data_
 void proc_audio_data(void* pvParameters)
 {
     static const char* TAG = "Audio DSP";
-    // Wait for initial notification from RX task, so first audio data is half-valid
-    // This should limit delay to just the first swap, i.e. 50 ms
-    (void) ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    float yin_f0_est_latch;
 
     // Register with WDT
     esp_task_wdt_add(NULL);
 
     // Main loop
     while (1) {
-        // Clear event bit
-        (void) xEventGroupClearBits(xTaskSyncBits, DSP_TASK_BIT);
 
-        // Set buffer pointers
-        int* rxBuffer = rxBuffers[dsp_idx];
-        int* txBuffer = txBuffers[dsp_idx];
+        // Wait for RX bit to be set
+        (void) xEventGroupWaitBits(RxSync, I2S_SYNC_BIT, pdFALSE, pdTRUE, portMAX_DELAY);
+
+        // Move up delay tap
+        // FIXME need to work in delay tap, if desired
+        memcpy(dsp_rx, dsp_rx + HOP_SIZE, N_SAMPLES * sizeof(int));
+        // Latch F0 estimate
+        yin_f0_est_latch = yin_f0_est;
+
+        // Set individual bit and move on
+        (void) xEventGroupSetBits(RxSync, DSP_SYNC_BIT);
 
         unsigned int start_cc = dsp_get_cpu_cycle_count();
 
         // Modify data
-        audio_data_modification(rxBuffer, txBuffer);
+        audio_data_modification(yin_f0_est_latch);
         
         unsigned int end_cc = dsp_get_cpu_cycle_count();
 
@@ -274,7 +306,7 @@ void proc_audio_data(void* pvParameters)
         // If this is failed, then the audio will be choppy
         if (iter_calc_time > 1.5 * I2S_BUFFER_TIME_MS) {
             ESP_LOGE(TAG, "DSP calculation time too long! Should be <= %.1f ms, is instead %.3f", I2S_BUFFER_TIME_MS, iter_calc_time);
-            configASSERT(false);
+            // configASSERT(false);
         }
         else if (iter_calc_time > I2S_BUFFER_TIME_MS) {
             // Just issue warning
@@ -284,21 +316,19 @@ void proc_audio_data(void* pvParameters)
         dsp_calc_time_sum += iter_calc_time;
         loop_count++;
 
-        // Copy rxBuffer into rxBuffer_overlap
-        for (int i = 0; i < HOP_SIZE; i++)
-        {
-            rxBuffer_overlap[i] = rxBuffer[2 * i];
-        }
-
         // Reset watchdog
         esp_task_wdt_reset();
 
-        // Set event group bit
-        // Ignore result (will be checked in main loop)
-        (void) xEventGroupSync(xTaskSyncBits,
-                               DSP_TASK_BIT,
+        // Move up buffer for I2S
+        memcpy(i2s_tx, dsp_tx, N_SAMPLES * sizeof(int));
+
+        // Set event group bit and wait for sync
+        (void) xEventGroupSync(TxSync,
+                               DSP_SYNC_BIT,
                                ALL_SYNC_BITS,
                                portMAX_DELAY);
+        // Clear both bits
+        (void) xEventGroupClearBits(TxSync, ALL_SYNC_BITS);
     }
     
 }
@@ -310,44 +340,50 @@ void i2s_receive(void* pvParameters)
     size_t data_received = 0;
 
     configASSERT( rx_handle != NULL );
+    
+    // Instantiate stream buffer
+    int* rx_stream_buff = (int *)pvParameters;
+    configASSERT( rx_stream_buff != NULL );
 
     // Enable RX channel
     ESP_ERROR_CHECK(i2s_channel_enable(rx_handle));
 
-    // Perform first read with dsp buffer, so that it has real data to use
-    // for the first frame
-    i2s_channel_read(rx_handle, rxBuffers[dsp_idx], HOP_BUFFER_SIZE_B, &data_received, 300 / portTICK_PERIOD_MS);
-    if (data_received != HOP_BUFFER_SIZE_B) {
-        ESP_LOGE(TAG, "Only read %d out of %d bytes from I2S buffer", data_received, HOP_BUFFER_SIZE_B);
-    }
-
-    // Notify TX and DSP task to continue on
-    xTaskNotifyGive(xTxTaskHandle);
-    xTaskNotifyGive(xDSPTaskHandle);
-
     while (1) {
-        
-        // Clear event bit
-        (void) xEventGroupClearBits(xTaskSyncBits, RX_TASK_BIT);
-
         // Wait for sent notification
         (void) ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
-        int* stream_data = rxBuffers[i2s_idx];
+        int* i2s_rx_ptr = i2s_rx;
 
         // Read from I2S buffer
-        i2s_channel_read(rx_handle, stream_data, HOP_BUFFER_SIZE_B, &data_received, 300 / portTICK_PERIOD_MS);
-        if (data_received != HOP_BUFFER_SIZE_B) {
-            ESP_LOGE(TAG, "Only read %d out of %d bytes from I2S buffer", data_received, HOP_BUFFER_SIZE_B);
+        for (int i = 0; i < RX_STREAM_BUFF_DIV; i++) {
+            i2s_channel_read(rx_handle, rx_stream_buff, RX_STREAM_BUFF_SIZE_B, &data_received, 300 / portTICK_PERIOD_MS);
+            if (data_received != RX_STREAM_BUFF_SIZE_B) {
+                ESP_LOGE(TAG, "Only read %d out of %d bytes from I2S buffer", data_received, RX_STREAM_BUFF_SIZE_B);
+            }
+
+            // Fill I2S RX buffer
+            // For now just use even-indexed values for left mic
+            for (int j = 0; j < HOP_SIZE / RX_STREAM_BUFF_DIV; j++) {
+                *i2s_rx_ptr = rx_stream_buff[2 * j];
+                i2s_rx_ptr++; // Increment pointer
+            }
         }
 
-        // Set event group bit
-        // Ignore result (will be checked in main loop)
-        (void) xEventGroupSync(xTaskSyncBits,
-                               RX_TASK_BIT,
+        // Calculate fundamental freq estimate using Yin algorithm
+        float f0_est_snapshot = Yin_getPitch(&yin_s, i2s_rx, I2S_SAMPLING_FREQ_HZ);
+        // Only latch as fundamental if value isn't -1
+        if (f0_est_snapshot > -1) {
+            yin_f0_est = f0_est_snapshot;
+        }
+
+        // Set event group bit, wait for all sync before moving on
+        (void) xEventGroupSync(RxSync,
+                               I2S_SYNC_BIT,
                                ALL_SYNC_BITS,
                                portMAX_DELAY);
 
+        // Clear all bits
+        (void) xEventGroupClearBits(RxSync, ALL_SYNC_BITS);
     }
 }
 
@@ -356,35 +392,35 @@ void i2s_transmit(void* pvParameters)
     static const char *TAG = "I2S transmit";
 
     configASSERT( tx_handle != NULL );
+
+    // Instantiate stream buffer
+    int* tx_stream_buff = (int *)pvParameters;
+    configASSERT( tx_stream_buff != NULL );
     
     // Enable TX channel
     ESP_ERROR_CHECK(i2s_channel_enable(tx_handle));
 
-    // Wait for initial notification from RX task, so first audio data is half-valid
-    // This should limit delay to just the first swap, i.e. 50 ms
-    (void) ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-
     while (1) {
         size_t data_written = 0;
 
-        // Clear event bits
-        (void) xEventGroupClearBits(xTaskSyncBits, TX_TASK_BIT);
+        // Wait for DSP sync bit to be set before continuing on
+        (void) xEventGroupWaitBits(TxSync, DSP_SYNC_BIT, pdFALSE, pdTRUE, portMAX_DELAY);
 
-        int* stream_data = txBuffers[i2s_idx];
+        // Copy in DSP data to stream buffer
+        for (int j = 0; j < HOP_SIZE; j++) {
+            tx_stream_buff[2 * j]     = i2s_tx[j];
+            tx_stream_buff[2 * j + 1] = i2s_tx[j];
+        }
+
+        // Set bit and release DSP task
+        (void) xEventGroupSetBits(TxSync, I2S_SYNC_BIT);
 
         // Write to I2S buffer
         // No error check here to allow for partial writes
-        i2s_channel_write(tx_handle, stream_data, HOP_BUFFER_SIZE_B, &data_written, 300 / portTICK_PERIOD_MS);
+        i2s_channel_write(tx_handle, tx_stream_buff, HOP_BUFFER_SIZE_B, &data_written, 300 / portTICK_PERIOD_MS);
         if (data_written != HOP_BUFFER_SIZE_B) {
             ESP_LOGE(TAG, "Only wrote %d out of %d bytes to I2S buffer", data_written, HOP_BUFFER_SIZE_B);
         }
-
-        // Set event group bit
-        // Ignore result (will be checked in main loop)
-        (void) xEventGroupSync(xTaskSyncBits,
-                               TX_TASK_BIT,
-                               ALL_SYNC_BITS,
-                               portMAX_DELAY);
     }
 }
 
@@ -393,7 +429,7 @@ void print_task_stats(void* pvParameters)
     const char* TAG = "Task Stats";
 
     while (1) {
-        vTaskDelay(5000 / portTICK_PERIOD_MS);
+        vTaskDelay(2000 / portTICK_PERIOD_MS);
 
         // Calculate average time spent doing DSP calculations in ms
         float dsp_calc_time_avg = dsp_calc_time_sum / loop_count;
@@ -412,6 +448,8 @@ void print_task_stats(void* pvParameters)
 
         // Print local peaks
         print_local_peaks();
+        // Print fundamental frequency estimate
+        ESP_LOGI(TAG, "Fundamental frequency est: %.2f Hz (prob %.4f)", yin_f0_est, yin_s.probability);
 
         // Copy magnitude buffers
         // memcpy(rx_FFT_mag_cpy, rx_FFT_mag, PLOT_LEN * sizeof(float));
@@ -503,31 +541,36 @@ void mon_mode_switch(void* pvParameters)
 void app_main(void)
 {
     static const char *TAG = "main";
+    static bool init_speaker_silence = true;
     BaseType_t xReturned = 0UL;
     
     // Initiallize ES8388 and I2S channel
     es8388_config();
     es_i2s_init(&tx_handle, &rx_handle, I2S_SAMPLING_FREQ_HZ);
+    // Start silent
+    es8388_set_voice_mute(init_speaker_silence);
 
     ESP_LOGW(TAG, "Channels initiated!");
 
-    // Instantiate TX/RX buffers
-    for (int i = 0; i < NUM_BUFFERS; i++) {
-        txBuffers[i] = (int *)calloc(2 * HOP_SIZE, sizeof(int));
-        rxBuffers[i] = (int *)calloc(2 * HOP_SIZE, sizeof(int));
+    // Allocate TX/RX data buffers
+    rxBuffer = calloc(FULL_BUFFER_SIZE, sizeof(int));
+    txBuffer = calloc(FULL_BUFFER_SIZE, sizeof(int));
+    configASSERT(rxBuffer != NULL && txBuffer != NULL);
 
-        configASSERT( (txBuffers[i] != NULL) && (rxBuffers[i] != NULL) );
-    }
+    // Allocate stream buffers
+    void* rx_stream_buff = calloc(2 * HOP_SIZE / RX_STREAM_BUFF_DIV, sizeof(int)); // Smaller to save on memory footprint
+    void* tx_stream_buff = calloc(2 * HOP_SIZE, sizeof(int));
 
     // Clear out all other memory buffers
     memset(rx_FFT, 0, sizeof(rx_FFT));
     memset(prev_rx_FFT, 0, sizeof(prev_rx_FFT));
     memset(tx_iFFT, 0.0, sizeof(tx_iFFT));
-    memset(txBuffer_overlap, 0, sizeof(txBuffer_overlap));
-    memset(rxBuffer_overlap, 0, sizeof(rxBuffer_overlap));
 
     // Initialize FFT coefficients
     dsps_fft2r_init_fc32(NULL, N);
+
+    // Initialize Yin algorithm struct
+    Yin_init(&yin_s, YIN_SAMPLES, YIN_DEFAULT_THRESHOLD, yinBuffPtr);
 
     // Set peak shift algorithm config
     peak_shift_cfg_t cfg = {
@@ -548,15 +591,12 @@ void app_main(void)
     // Config true envelope calculation
     config_true_env_calc(env_FFT, cepstrum_buff, I2S_SAMPLING_FREQ_HZ);
 
-    // Intantiate indices
-    i2s_idx = I2S_IDX_START;
-    dsp_idx = DSP_IDX_START;
-
     // Create semaphore for mode switching
     xModeSwitchMutex = xSemaphoreCreateMutex();
 
-    // Instantiate event group for task sync
-    xTaskSyncBits = xEventGroupCreate();
+    // Instantiate sync event groups
+    RxSync = xEventGroupCreate();
+    TxSync = xEventGroupCreate();
 
     // Instantiate I2S callbacks
     i2s_event_callbacks_t cbs = {
@@ -581,12 +621,13 @@ void app_main(void)
     );
 
     // Start RX/TX buffer tasks
+    // Pass in pre-allocated stream buffers
     ESP_LOGW(TAG, "Starting RX task...");
     xReturned |= xTaskCreatePinnedToCore(
         i2s_receive, 
         "I2S Receive Task",
         RX_TASK_STACK_SIZE,
-        NULL,
+        rx_stream_buff,
         RX_TASK_PRIORITY,
         &xRxTaskHandle,
         RX_TASK_CORE
@@ -596,7 +637,7 @@ void app_main(void)
         i2s_transmit, 
         "I2S Transmit Task",
         TX_TASK_STACK_SIZE,
-        NULL,
+        tx_stream_buff,
         TX_TASK_PRIORITY,
         &xTxTaskHandle,
         TX_TASK_CORE
@@ -627,46 +668,24 @@ void app_main(void)
     // Verify all tasks started properly
     if ( xReturned != pdPASS )
     {
-        ESP_LOGE(TAG, "Failed to create tasks! Error: %d. Restarting ESP in 5 seconds...", xReturned);
-        vTaskDelay(5000 / portTICK_PERIOD_MS);
-        esp_restart();
+        ESP_LOGE(TAG, "Failed to create tasks! Error: %d", xReturned);
+        configASSERT(0);
     }
-    
-    // Main loop
-    ESP_LOGI(TAG, "Finished setup, entering main loop.");
-    while (1) {
-        EventBits_t uxReturn;
-        // Clear switch bit
-        (void) xEventGroupClearBits(xTaskSyncBits, BUFF_SWAP_BITS);
-        // Wait for all other tasks to finish
-        uxReturn = xEventGroupWaitBits(xTaskSyncBits,
-                                       BUFF_SWAP_BITS,
-                                       pdFALSE, // Don't clear on exit
-                                       pdTRUE, // Wait for all bits
-                                       SYNC_TIMEOUT_TICKS);
 
-        // Assert all bits have been set
-        configASSERT( (uxReturn & BUFF_SWAP_BITS) == BUFF_SWAP_BITS );
+    // Loop forever
+    while(1) {
+        vTaskDelay(500 / portTICK_PERIOD_MS);
 
-        // Swap indices with XOR
-        dsp_idx ^= 1;
-        i2s_idx ^= 1;
-
-        configASSERT( dsp_idx != i2s_idx );
-
-        // Check headphone jack toggle
+        taskENTER_CRITICAL(&crit_mux);
+        // Toggle headphone jack
         es_toggle_power_amp();
 
-        // Set remaining bit
-        uxReturn = xEventGroupSync(xTaskSyncBits,
-                                   SWAP_COMPLETE_BIT,
-                                   ALL_SYNC_BITS,
-                                   0); // Should be no delay
-        configASSERT( (uxReturn & ALL_SYNC_BITS) == ALL_SYNC_BITS );
-    }
+        taskEXIT_CRITICAL(&crit_mux);
 
-    // If this point is hit, wait some time then restart
-    ESP_LOGE(TAG, "Exited main loop! Restarting ESP in 5 seconds...");
-    vTaskDelay(5000 / portTICK_PERIOD_MS);
-    esp_restart();
+        // If silent, unmute
+        if (init_speaker_silence) {
+            es8388_set_voice_mute(false);
+            init_speaker_silence = false;
+        }
+    };
 }

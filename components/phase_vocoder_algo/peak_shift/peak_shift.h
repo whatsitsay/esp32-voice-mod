@@ -18,18 +18,8 @@
 // Minimum threshold to consider magnitude a peak
 // Value is empirical, based on testing of sound quality with peak-finding algorithm and calc time
 #define MAX_PRINT_PEAKS (5) // To prevent overloading
-#define BAND_DIV_NBINS (16) // Number of bins for each 'band' when calculating peaks
-#define FUNDAMENTAL_FREQ_MAX_BIN (300) // Maximum bin for estimating the fundamental frequency (empirical)
-
-// Parameters for low-pitch index correction, as suggested by Roebel/Rodet
-// I.e., bins closer to the perceived fundamental are affected less by the
-// spectral envelope than higher bins
-// Should prevent low-pitch shifting from becoming too dull
-#define TRANSITION_BANDWIDTH (40) // Empirical
-#define ENVELOPE_ASYMPTOTE_MAX (8) // 1/(1+exp(x)) is < 60 dB from asymptotes when |x|>7.6~=8
-// For LUT, give just enough room to reach 60 dB point of asymptotes
-#define IDX_CORR_SIZE ((2 * TRANSITION_BANDWIDTH * ENVELOPE_ASYMPTOTE_MAX) + 1)
-#define IDX_CORR_FUNDAMENTAL (TRANSITION_BANDWIDTH * ENVELOPE_ASYMPTOTE_MAX)
+#define BAND_DIV_NBINS (7) // Number of bins for each 'band' when calculating peaks
+#define FUNDAMENTAL_FREQ_MAX_BIN (150) // Maximum bin for estimating the fundamental frequency (empirical)
 
 typedef struct {
   int hop_size;               // Hop size of analysis
