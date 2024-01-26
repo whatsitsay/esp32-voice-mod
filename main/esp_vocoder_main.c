@@ -38,6 +38,7 @@
 #include "esp_vocoder_main.h"
 #include <Yin.h>
 
+////// HELPER FUNCTIONS //////
 bool partial_in_tune(int partial_idx)
 {
     switch (partial_idx % 12)
@@ -55,7 +56,6 @@ bool partial_in_tune(int partial_idx)
     }
 }
 
-////// HELPER FUNCTIONS //////
 float get_closest_partial(float f0_est)
 {
     // Round by power of 2 for nearest semitone from minimum
@@ -128,14 +128,14 @@ void audio_data_modification(float f0_est) {
     // Conditions for resetting phase
     if (prev_vocoder_mode != vocoder_mode) {
         // Reset phase compensation array on mode switch
-        RESET_TX_PHASE;
+        reset_phase_comp_arr(prev_tx_FFT);
         // Reset silence count
         silence_count = 0;
     } else if (max_mag_db < NOISE_THRESHOLD_DB) {
         // Reset array if near silence (below threshold) base on counter
         silence_count++;
         if (silence_count % SILENCE_RESET_COUNT == 0) {
-            RESET_TX_PHASE;
+            reset_phase_comp_arr(prev_tx_FFT);
             phase_reset_count++;
         }
     } else {
@@ -159,6 +159,9 @@ void audio_data_modification(float f0_est) {
             // Perform full chorus shift for the rest
             for (int i = 0; i < NUM_PITCH_SHIFTS; i++) {
                 shift_peaks(PITCH_SHIFT_FACTORS[i], PITCH_SHIFT_GAINS[i]);
+                // Replace previous TX frame with new output each shift
+                // for cumulative result
+                memcpy(prev_tx_FFT, tx_iFFT, sizeof(prev_tx_FFT));
             }
             break;
         }
@@ -173,7 +176,7 @@ void audio_data_modification(float f0_est) {
         default: {
             // Copy in original sound, reset running phase comp
             memcpy(tx_iFFT, rx_FFT, FFT_MOD_SIZE * 2 * sizeof(float));
-            RESET_TX_PHASE;
+            reset_phase_comp_arr(prev_tx_FFT);
             phase_reset_count++;
         }
     }
@@ -182,8 +185,12 @@ void audio_data_modification(float f0_est) {
     // Give mutex
     xSemaphoreGive(xModeSwitchMutex);
 
-    // Calc phase of final output FFT for next frame
-    calc_fft_phase(tx_iFFT, prev_tx_FFT_phase, FFT_MOD_SIZE);
+    // Store output FFT for processing next frame
+    // Unnecessary for chorus mode (this already occurs)
+    if (vocoder_mode != MOD_CHORUS)
+    {
+        memcpy(prev_tx_FFT, tx_iFFT, sizeof(prev_tx_FFT));
+    }
 
     // Fill latter half of FFT with conjugate mirror data
     fill_mirror_fft(tx_iFFT, N);
@@ -583,14 +590,14 @@ void app_main(void)
         .fft_prev_ptr = prev_rx_FFT,
         .fft_mag_ptr = rx_FFT_mag,
         .fft_out_ptr = tx_iFFT,
-        .fft_out_prev_phase = prev_tx_FFT_phase,
+        .fft_out_prev_ptr = prev_tx_FFT,
         .true_env_ptr = rx_env,
         .inv_env_ptr  = rx_env_inv,
     };
     init_peak_shift_cfg(&cfg);
 
     // Reset phase compensation buffer
-    RESET_TX_PHASE;
+    reset_phase_comp_arr(prev_tx_FFT);
 
     // Config true envelope calculation
     config_true_env_calc(env_FFT, cepstrum_buff, I2S_SAMPLING_FREQ_HZ);

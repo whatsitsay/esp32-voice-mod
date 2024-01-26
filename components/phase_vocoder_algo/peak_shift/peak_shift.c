@@ -51,6 +51,16 @@ void init_peak_shift_cfg(peak_shift_cfg_t* cfg)
   }
 }
 
+void reset_phase_comp_arr(float* phase_comp)
+{
+  for (int i = 0; i < 2 * FFT_MOD_SIZE; i += 2)
+  {
+    // Set to polar unity (real = 1, imag = 0)
+    phase_comp[i]   = 1;
+    phase_comp[i+1] = 0;
+  }
+}
+
 int find_local_peaks(void)
 {
   // Reset counters and flags
@@ -189,16 +199,15 @@ void shift_peaks(float shift_factor, float shift_gain)
     int new_peak      = i + idx_shift;
 
     // Calc peak phase propagation
-    // First convert peak instantaneous frequency back to radians
+    // Get phase of previous frame output FFT at new peak index
+    float prev_peak_phase = get_idx_phase(peak_shift_cfg->fft_out_prev_ptr, new_peak);
+    // Convert peak instantaneous frequency back to radians
     float inst_freq_rad = inst_freq * M_PI / 180.0;
     // Next calculate phase propagation for ROI
-    // Alter output previous phase to keep running sum (will be recalculated at end of frame)
-    float* out_prev_phase = peak_shift_cfg->fft_out_prev_phase + new_peak;
-    *out_prev_phase += inst_freq_rad * peak_shift_cfg->hop_size;
-    // Mod with 2pi
-    *out_prev_phase = fmodf(*out_prev_phase, TWO_M_PI);
+    float prop_phase = prev_peak_phase + inst_freq_rad * peak_shift_cfg->hop_size;
     // Per-bin phase prop will lose the original bin's phase to customize per bin 
-    float per_bin_prop_phase = *out_prev_phase - _peak_phase_arr[i];
+    // Also mod with 2pi
+    float per_bin_prop_phase = fmodf(prop_phase - _peak_phase_arr[i], TWO_M_PI);
     // Convert to polar coordinates
     float phase_prop_real, phase_prop_imag;
     polar_to_complex(1, per_bin_prop_phase, &phase_prop_real, &phase_prop_imag);
