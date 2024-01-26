@@ -27,6 +27,8 @@ static unsigned _num_peaks = 0;
 static int _fundamental_freq_idx = -1;
 static uint8_t _peak_flag_arr[(FFT_MOD_SIZE / 8) + 1];
 static float _inst_freq_arr[FFT_MOD_SIZE];
+static float _peak_phase_arr[FFT_MOD_SIZE];
+static float _exp_phase_incr[FFT_MOD_SIZE];
 
 // Index correction LUT
 // Enough space to approach asymptotes, plus origin
@@ -41,14 +43,21 @@ const char* TAG = "Peak Shift Algorithm";
 void init_peak_shift_cfg(peak_shift_cfg_t* cfg)
 {
   peak_shift_cfg = cfg;
+
+  // Initialize expected phase increment per frame
+  for (int k = 0; k < FFT_MOD_SIZE; k++)
+  {
+    _exp_phase_incr[k] = (k * TWO_M_PI / N_SAMPLES) * cfg->hop_size;
+  }
 }
 
-void reset_phase_comp_arr(float* run_phase_comp_ptr)
+void reset_phase_comp_arr(float* phase_comp)
 {
-  for (int i = 0; i <= FFT_MOD_SIZE * 2; i += 2)
+  for (int i = 0; i < 2 * FFT_MOD_SIZE; i += 2)
   {
-    run_phase_comp_ptr[i]   = 1;
-    run_phase_comp_ptr[i+1] = 0;
+    // Set to polar unity (real = 1, imag = 0)
+    phase_comp[i]   = 1;
+    phase_comp[i+1] = 0;
   }
 }
 
@@ -103,15 +112,15 @@ int find_local_peaks(void)
 
     // Better estimate actual frequency of peak using phase difference
     // with previous frame (back calculation only, as this is real-time)
-    float phase_diff = peak_phase - prev_phase;
-    // Bound between pi and -pi by taking advantage of periodicity
-    phase_diff = (phase_diff > M_PI) ? -2 * M_PI + phase_diff : // Wraparound to -pi
-                  (phase_diff < -M_PI) ? 2 * M_PI + phase_diff : // Wraparound to +pi
-                  phase_diff;                                    // Within range, use as-is
+    float phase_diff = fmodf(peak_phase - prev_phase - _exp_phase_incr[i], TWO_M_PI);
+    // Wrap between pi and -pi by taking advantage of periodicity
+    if (phase_diff > M_PI) phase_diff = -TWO_M_PI + phase_diff;
+
     // Correction is defined as the ratio of this phase diff over 2pi, times the bin frequency step
-    float freq_diff = (phase_diff * peak_shift_cfg->bin_freq_step) / (2 * M_PI);
+    float freq_diff = (phase_diff * peak_shift_cfg->bin_freq_step) / (TWO_M_PI);
     // Store inst frequency in array for later use during pitch shifting
     _inst_freq_arr[i] = (i * peak_shift_cfg->bin_freq_step) + freq_diff;
+    _peak_phase_arr[i] = peak_phase;
 
     // Increment peak counter
     _num_peaks++;
@@ -149,7 +158,7 @@ float _get_true_env_correction(int old_idx, int new_idx)
   return true_env_gain;
 }
 
-void shift_peaks(float shift_factor, float shift_gain, float* run_phase_comp_ptr)
+void shift_peaks(float shift_factor, float shift_gain, float true_env_scale)
 {
   // First check if unity.
   // If so, simply add to output FFT
@@ -187,13 +196,21 @@ void shift_peaks(float shift_factor, float shift_gain, float* run_phase_comp_ptr
     int idx_shift = (int)roundf(delta_f / peak_shift_cfg->bin_freq_step);
     int new_roi_start = left_bound + idx_shift;
     int new_roi_end   = right_bound + idx_shift;
+    int new_peak      = i + idx_shift;
 
-    // Convert change in freq to radians
-    delta_f *= M_PI / 180.0;
-    // Calculate phase compensation for ROI based on freq shift
-    float phase_comp_angle = fmod(delta_f * peak_shift_cfg->hop_size, 2 * M_PI);
-    float phase_comp_real, phase_comp_imag;
-    polar_to_complex(1, phase_comp_angle, &phase_comp_real, &phase_comp_imag);
+    // Calc peak phase propagation
+    // Get phase of previous frame output FFT at new peak index
+    float prev_peak_phase = get_idx_phase(peak_shift_cfg->fft_out_prev_ptr, new_peak);
+    // Convert peak instantaneous frequency back to radians
+    float inst_freq_rad = inst_freq * M_PI / 180.0;
+    // Next calculate phase propagation for ROI
+    float prop_phase = prev_peak_phase + inst_freq_rad * peak_shift_cfg->hop_size;
+    // Per-bin phase prop will lose the original bin's phase to customize per bin 
+    // Also mod with 2pi
+    float per_bin_prop_phase = fmodf(prop_phase - _peak_phase_arr[i], TWO_M_PI);
+    // Convert to polar coordinates
+    float phase_prop_real, phase_prop_imag;
+    polar_to_complex(1, per_bin_prop_phase, &phase_prop_real, &phase_prop_imag);
 
     // Iterate through ROI
     // Increment by 2's for complex values
@@ -206,31 +223,17 @@ void shift_peaks(float shift_factor, float shift_gain, float* run_phase_comp_ptr
       bool hit_boundary = new_idx != j;
       // Store original index
       int orig_idx = j - (2 * idx_shift);
-
-      float* run_phase_comp_real = &run_phase_comp_ptr[new_idx];
-      float* run_phase_comp_imag = &run_phase_comp_ptr[new_idx+1];
-      
-      // First multiply current frame phase compensation with running product
-      // Product is *cumulative* between frames
-      float prev_run_phase_comp_real = *run_phase_comp_real;
-      float prev_run_phase_comp_imag = *run_phase_comp_imag;
-      mult_complex(prev_run_phase_comp_real,
-                  prev_run_phase_comp_imag,
-                  phase_comp_real,
-                  phase_comp_imag,
-                  run_phase_comp_real,
-                  run_phase_comp_imag);
       
       // Set value at new ROI index as product of original index
-      // value and cumulative phase compensation
+      // value and phase propagation value
       // Index shift is doubled due to real+imag
       float orig_fft_real = peak_shift_cfg->fft_ptr[orig_idx];
       float orig_fft_imag = peak_shift_cfg->fft_ptr[orig_idx + 1];
       float prod_fft_real, prod_fft_imag;
       mult_complex(orig_fft_real,
                    orig_fft_imag,
-                   *run_phase_comp_real,
-                   *run_phase_comp_imag,
+                   phase_prop_real,
+                   phase_prop_imag,
                    &prod_fft_real,
                    &prod_fft_imag);
       
@@ -243,7 +246,8 @@ void shift_peaks(float shift_factor, float shift_gain, float* run_phase_comp_ptr
       // FIXME: might be worth having some sort of linear slope when below fundamental, instead of hard cliff
       int new_bin_idx  = new_idx / 2;
       int orig_bin_idx = orig_idx / 2;
-      float true_env_corr = _get_true_env_correction(orig_bin_idx, new_bin_idx);
+      float true_env_corr = true_env_scale * _get_true_env_correction(orig_bin_idx, new_bin_idx);
+      true_env_corr += (1 - true_env_scale);
 
       // Add to output FFT at new index, now applying shift_gain and true envelope correction
       // to both real and imaginary components

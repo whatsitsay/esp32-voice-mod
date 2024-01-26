@@ -38,6 +38,7 @@
 #include "esp_vocoder_main.h"
 #include <Yin.h>
 
+////// HELPER FUNCTIONS //////
 bool partial_in_tune(int partial_idx)
 {
     switch (partial_idx % 12)
@@ -55,7 +56,6 @@ bool partial_in_tune(int partial_idx)
     }
 }
 
-////// HELPER FUNCTIONS //////
 float get_closest_partial(float f0_est)
 {
     // Round by power of 2 for nearest semitone from minimum
@@ -79,7 +79,7 @@ float get_closest_partial(float f0_est)
  * @param txBuffer - Output buffer for modified sound data for transmission
  */
 void audio_data_modification(float f0_est) {
-    static const char* TAG = "Audio DSP Mod";
+    // static const char* TAG = "Audio DSP Mod";
     static vocoder_mode_e prev_vocoder_mode;
     static unsigned silence_count = 0;
 
@@ -128,14 +128,14 @@ void audio_data_modification(float f0_est) {
     // Conditions for resetting phase
     if (prev_vocoder_mode != vocoder_mode) {
         // Reset phase compensation array on mode switch
-        reset_phase_comp_arr(run_phase_comp);
+        reset_phase_comp_arr(prev_tx_FFT);
         // Reset silence count
         silence_count = 0;
     } else if (max_mag_db < NOISE_THRESHOLD_DB) {
         // Reset array if near silence (below threshold) base on counter
         silence_count++;
         if (silence_count % SILENCE_RESET_COUNT == 0) {
-            reset_phase_comp_arr(run_phase_comp);
+            reset_phase_comp_arr(prev_tx_FFT);
             phase_reset_count++;
         }
     } else {
@@ -150,7 +150,7 @@ void audio_data_modification(float f0_est) {
             float f0_closest_partial = get_closest_partial(f0_est);
             float autotune_shift = f0_closest_partial / f0_est;
             // ESP_LOGI(TAG, "Yin F0 estimate = %.3f Hz, closest partial @ %.2f Hz => shift of %.4f", f0_est, f0_closest_partial, autotune_shift);
-            shift_peaks(autotune_shift, 1.0, run_phase_comp);
+            shift_peaks(autotune_shift, AUTOTUNE_GAIN, AUTOTUNE_SCALE);
             break;
         }
         case MOD_CHORUS: {
@@ -158,22 +158,25 @@ void audio_data_modification(float f0_est) {
             memcpy(tx_iFFT, rx_FFT, FFT_MOD_SIZE * 2 * sizeof(float));
             // Perform full chorus shift for the rest
             for (int i = 0; i < NUM_PITCH_SHIFTS; i++) {
-                shift_peaks(PITCH_SHIFT_FACTORS[i], PITCH_SHIFT_GAINS[i], run_phase_comp);
+                shift_peaks(PITCH_SHIFT_FACTORS[i], PITCH_SHIFT_GAINS[i], CHORUS_SCALE);
+                // Replace previous TX frame with new output each shift
+                // for cumulative result
+                memcpy(prev_tx_FFT, tx_iFFT, sizeof(prev_tx_FFT));
             }
             break;
         }
         case MOD_LOW: {
-            shift_peaks(LOW_EFFECT_SHIFT, LOW_EFFECT_GAIN, run_phase_comp);
+            shift_peaks(LOW_EFFECT_SHIFT, LOW_EFFECT_GAIN, LOW_EFFECT_SCALE);
             break;
         }
         case MOD_HIGH: {
-            shift_peaks(HIGH_EFFECT_SHIFT, HIGH_EFFECT_GAIN, run_phase_comp);
+            shift_peaks(HIGH_EFFECT_SHIFT, HIGH_EFFECT_GAIN, HIGH_EFFECT_SCALE);
             break;
         }
         default: {
             // Copy in original sound, reset running phase comp
             memcpy(tx_iFFT, rx_FFT, FFT_MOD_SIZE * 2 * sizeof(float));
-            reset_phase_comp_arr(run_phase_comp);
+            reset_phase_comp_arr(prev_tx_FFT);
             phase_reset_count++;
         }
     }
@@ -181,6 +184,13 @@ void audio_data_modification(float f0_est) {
     prev_vocoder_mode = vocoder_mode;
     // Give mutex
     xSemaphoreGive(xModeSwitchMutex);
+
+    // Store output FFT for processing next frame
+    // Unnecessary for chorus mode (this already occurs)
+    if (vocoder_mode != MOD_CHORUS)
+    {
+        memcpy(prev_tx_FFT, tx_iFFT, sizeof(prev_tx_FFT));
+    }
 
     // Fill latter half of FFT with conjugate mirror data
     fill_mirror_fft(tx_iFFT, N);
@@ -308,7 +318,7 @@ void proc_audio_data(void* pvParameters)
             ESP_LOGE(TAG, "DSP calculation time too long! Should be <= %.1f ms, is instead %.3f", I2S_BUFFER_TIME_MS, iter_calc_time);
             // configASSERT(false);
         }
-        else if (iter_calc_time > I2S_BUFFER_TIME_MS) {
+        else if (iter_calc_time > I2S_BUFFER_TIME_MS + 2) {
             // Just issue warning
             ESP_LOGW(TAG, "DSP calculation time a little too long at %.3f ms", iter_calc_time);
         }
@@ -373,7 +383,8 @@ void i2s_receive(void* pvParameters)
         float f0_est_snapshot = Yin_getPitch(&yin_s, i2s_rx, I2S_SAMPLING_FREQ_HZ);
         // Only latch as fundamental if value isn't -1
         if (f0_est_snapshot > -1) {
-            yin_f0_est = f0_est_snapshot;
+            yin_f0_est  = f0_est_snapshot;
+            yin_f0_prob = yin_s.probability;
         }
 
         // Set event group bit, wait for all sync before moving on
@@ -449,7 +460,7 @@ void print_task_stats(void* pvParameters)
         // Print local peaks
         print_local_peaks();
         // Print fundamental frequency estimate
-        ESP_LOGI(TAG, "Fundamental frequency est: %.2f Hz (prob %.4f)", yin_f0_est, yin_s.probability);
+        ESP_LOGI(TAG, "YIN fundamental frequency est: %.2f Hz (prob %.4f)", yin_f0_est, yin_f0_prob);
 
         // Copy magnitude buffers
         // memcpy(rx_FFT_mag_cpy, rx_FFT_mag, PLOT_LEN * sizeof(float));
@@ -580,13 +591,14 @@ void app_main(void)
         .fft_prev_ptr = prev_rx_FFT,
         .fft_mag_ptr = rx_FFT_mag,
         .fft_out_ptr = tx_iFFT,
+        .fft_out_prev_ptr = prev_tx_FFT,
         .true_env_ptr = rx_env,
         .inv_env_ptr  = rx_env_inv,
     };
     init_peak_shift_cfg(&cfg);
 
     // Reset phase compensation buffer
-    reset_phase_comp_arr(run_phase_comp);
+    reset_phase_comp_arr(prev_tx_FFT);
 
     // Config true envelope calculation
     config_true_env_calc(env_FFT, cepstrum_buff, I2S_SAMPLING_FREQ_HZ);

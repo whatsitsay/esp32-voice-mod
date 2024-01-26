@@ -28,6 +28,7 @@ typedef struct {
   float* fft_prev_ptr;        // Pointer to input FFT array of previous frame (size N+2)
   float* fft_mag_ptr;         // Pointer to input FFT magnitude array of current frame (size N/2+1)
   float* fft_out_ptr;         // Pointer to output FFT (size 2*N)
+  float* fft_out_prev_ptr;    // Pointer to output FFT for previous frame
   float* true_env_ptr;        // Pointer to true envelope buffer (calculated externally)
   float* inv_env_ptr;         // Pointer to inverse of true envelope (i.e. 1/true_env above)
 } peak_shift_cfg_t;
@@ -43,15 +44,14 @@ typedef struct {
 void init_peak_shift_cfg(peak_shift_cfg_t* cfg);
 
 /**
- * @brief Reset cumulative phase compensation array
+ * @brief Reset phase compensation array
  * 
- * Sets all complex values to 1 + 0j
- * Needs to be a pointer in the case of chorus effect (multiple pitch shifts)
+ * Sets to polar unity (real = 1, imag = 0)
+ * Assumes size of FFT_MOD_SIZE x 2 (or half FFT size, doubled for real+imag)
  * 
- * @param run_phase_comp_ptr - Pointer to running phase compensation array.
- *                             Should be cfg->num_samples in length
+ * @param phase_comp - Phase compensation array
  */
-void reset_phase_comp_arr(float* run_phase_comp_ptr);
+void reset_phase_comp_arr(float* phase_comp);
 
 /**
  * @brief Locate peaks within FFT magnitude plot
@@ -99,8 +99,8 @@ float est_fundamental_freq(void);
  * 
  * @param shift_factor - Factor by which to shift frequency data
  * @param gain - Gain applied to shifted peaks
- * @param run_phase_comp_ptr - Pointer to array containing running phase rotation data
+ * @param true_env_scale - Scaling factor for true envelope correction
  */
-void shift_peaks(float shift_factor, float gain, float* run_phase_comp_ptr);
+void shift_peaks(float shift_factor, float gain, float true_env_scale);
 
 #endif // __PEAK_SHIFT__

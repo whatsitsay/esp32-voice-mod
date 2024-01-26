@@ -51,9 +51,9 @@ int N = N_SAMPLES;
 __attribute__((aligned(16))) float rx_FFT[N_SAMPLES * 2]; // Will be complex
 __attribute__((aligned(16))) float tx_iFFT[N_SAMPLES * 2];
 __attribute__((aligned(16))) float prev_rx_FFT[FFT_MOD_SIZE * 2]; // For inst freq calc
+__attribute__((aligned(16))) float prev_tx_FFT[FFT_MOD_SIZE * 2];
 // Peak shift buffers
 float rx_FFT_mag[FFT_MOD_SIZE]; // Needed for peak shifting
-float run_phase_comp[FFT_MOD_SIZE * 2]; // Cumulative phase compensation buffer
 // True envelope buffers
 // Use tx_iFFT to save memory for envelope FFT/cepstrum buffers
 float* env_FFT = tx_iFFT;
@@ -67,9 +67,10 @@ float rx_env_inv[FFT_MOD_SIZE]; // Inverse for ratio calc
 static Yin yin_s;
 static float yinBuffPtr[YIN_SAMPLES / 2];
 float yin_f0_est;
+float yin_f0_prob;
 
-#define NOISE_THRESHOLD_DB (14) // Empirical
-#define SILENCE_RESET_COUNT (5) // ~every quarter second
+#define NOISE_THRESHOLD_DB  (14) // Empirical
+#define SILENCE_RESET_COUNT (10) // every quarter second
 
 // TX/RX buffers
 #define DELAY_TAP_SIZE   (0) // No delay tap for now
@@ -145,13 +146,16 @@ static const float PITCH_SHIFT_GAINS[] = {
   1.0, // Lower sixth flat
   0.8, // Minor third
 };
+#define CHORUS_SCALE      (1.0)
 
-#define LOW_EFFECT_SHIFT  (0.5)
+#define LOW_EFFECT_SHIFT  (0.75)
 #define LOW_EFFECT_GAIN   (1.2)
+#define LOW_EFFECT_SCALE  (0.2)
 #define HIGH_EFFECT_SHIFT (2.0)
 #define HIGH_EFFECT_GAIN  (1.0)
-#define PASSTHROUGH_SHIFT (1.0)
-#define PASSTHROUGH_GAIN  (1.0)
+#define HIGH_EFFECT_SCALE (1.0)
+#define AUTOTUNE_GAIN     (1.0)
+#define AUTOTUNE_SCALE    (1.0)
 
 
 typedef enum {
