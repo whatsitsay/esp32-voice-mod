@@ -267,9 +267,13 @@ const float PARTIAL_LOOKUP_TABLE_HZ[] = {
 };
 #define NUM_PARTIALS (84) // 7 octaves, 12 notes per octave
 
-// Filter for A Major chord notes only for more pronounced effect
-#define A_HARMONIC_INDICES      (9) // mod 12 => 9
-#define CSHARP_HARMONIC_INDICES (1)
-#define E_HARMONIC_INDICES      (4)
+// Filter for A Major scale for more pronounced effect
+#define A_INDICES      (9) // mod 12 => 9
+#define B_INDICES      (11)
+#define CSHARP_INDICES (1)
+#define D_INDICES      (2)
+#define E_INDICES      (4)
+#define FSHARP_INDICES (6)
+#define GSHARP_INDICES (8)
 
 #endif // __ESP_VOCODER_MAIN__

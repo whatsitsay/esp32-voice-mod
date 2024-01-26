@@ -42,9 +42,13 @@ bool partial_in_tune(int partial_idx)
 {
     switch (partial_idx % 12)
     {
-        case A_HARMONIC_INDICES:
-        case CSHARP_HARMONIC_INDICES:
-        case E_HARMONIC_INDICES:
+        case A_INDICES:      
+        case B_INDICES:      
+        case CSHARP_INDICES: 
+        case D_INDICES:      
+        case E_INDICES:      
+        case FSHARP_INDICES:
+        case GSHARP_INDICES:
             return true;
         default:
             return false;
