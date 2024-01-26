@@ -43,7 +43,14 @@ typedef struct {
  */
 void init_peak_shift_cfg(peak_shift_cfg_t* cfg);
 
-// TODO fill docstring
+/**
+ * @brief Reset phase compensation array
+ * 
+ * Sets to polar unity (real = 1, imag = 0)
+ * Assumes size of FFT_MOD_SIZE x 2 (or half FFT size, doubled for real+imag)
+ * 
+ * @param phase_comp - Phase compensation array
+ */
 void reset_phase_comp_arr(float* phase_comp);
 
 /**
@@ -92,7 +99,8 @@ float est_fundamental_freq(void);
  * 
  * @param shift_factor - Factor by which to shift frequency data
  * @param gain - Gain applied to shifted peaks
+ * @param true_env_scale - Scaling factor for true envelope correction
  */
-void shift_peaks(float shift_factor, float gain);
+void shift_peaks(float shift_factor, float gain, float true_env_scale);
 
 #endif // __PEAK_SHIFT__

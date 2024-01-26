@@ -67,6 +67,7 @@ float rx_env_inv[FFT_MOD_SIZE]; // Inverse for ratio calc
 static Yin yin_s;
 static float yinBuffPtr[YIN_SAMPLES / 2];
 float yin_f0_est;
+float yin_f0_prob;
 
 #define NOISE_THRESHOLD_DB  (14) // Empirical
 #define SILENCE_RESET_COUNT (10) // every quarter second
@@ -145,13 +146,16 @@ static const float PITCH_SHIFT_GAINS[] = {
   1.0, // Lower sixth flat
   0.8, // Minor third
 };
+#define CHORUS_SCALE      (1.0)
 
-#define LOW_EFFECT_SHIFT  (0.5)
+#define LOW_EFFECT_SHIFT  (0.75)
 #define LOW_EFFECT_GAIN   (1.2)
+#define LOW_EFFECT_SCALE  (0.2)
 #define HIGH_EFFECT_SHIFT (2.0)
 #define HIGH_EFFECT_GAIN  (1.0)
-#define PASSTHROUGH_SHIFT (1.0)
-#define PASSTHROUGH_GAIN  (1.0)
+#define HIGH_EFFECT_SCALE (1.0)
+#define AUTOTUNE_GAIN     (1.0)
+#define AUTOTUNE_SCALE    (1.0)
 
 
 typedef enum {

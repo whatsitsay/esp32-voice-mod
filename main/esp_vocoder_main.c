@@ -150,7 +150,7 @@ void audio_data_modification(float f0_est) {
             float f0_closest_partial = get_closest_partial(f0_est);
             float autotune_shift = f0_closest_partial / f0_est;
             // ESP_LOGI(TAG, "Yin F0 estimate = %.3f Hz, closest partial @ %.2f Hz => shift of %.4f", f0_est, f0_closest_partial, autotune_shift);
-            shift_peaks(autotune_shift, 1.0);
+            shift_peaks(autotune_shift, AUTOTUNE_GAIN, AUTOTUNE_SCALE);
             break;
         }
         case MOD_CHORUS: {
@@ -158,7 +158,7 @@ void audio_data_modification(float f0_est) {
             memcpy(tx_iFFT, rx_FFT, FFT_MOD_SIZE * 2 * sizeof(float));
             // Perform full chorus shift for the rest
             for (int i = 0; i < NUM_PITCH_SHIFTS; i++) {
-                shift_peaks(PITCH_SHIFT_FACTORS[i], PITCH_SHIFT_GAINS[i]);
+                shift_peaks(PITCH_SHIFT_FACTORS[i], PITCH_SHIFT_GAINS[i], CHORUS_SCALE);
                 // Replace previous TX frame with new output each shift
                 // for cumulative result
                 memcpy(prev_tx_FFT, tx_iFFT, sizeof(prev_tx_FFT));
@@ -166,11 +166,11 @@ void audio_data_modification(float f0_est) {
             break;
         }
         case MOD_LOW: {
-            shift_peaks(LOW_EFFECT_SHIFT, LOW_EFFECT_GAIN);
+            shift_peaks(LOW_EFFECT_SHIFT, LOW_EFFECT_GAIN, LOW_EFFECT_SCALE);
             break;
         }
         case MOD_HIGH: {
-            shift_peaks(HIGH_EFFECT_SHIFT, HIGH_EFFECT_GAIN);
+            shift_peaks(HIGH_EFFECT_SHIFT, HIGH_EFFECT_GAIN, HIGH_EFFECT_SCALE);
             break;
         }
         default: {
@@ -383,7 +383,8 @@ void i2s_receive(void* pvParameters)
         float f0_est_snapshot = Yin_getPitch(&yin_s, i2s_rx, I2S_SAMPLING_FREQ_HZ);
         // Only latch as fundamental if value isn't -1
         if (f0_est_snapshot > -1) {
-            yin_f0_est = f0_est_snapshot;
+            yin_f0_est  = f0_est_snapshot;
+            yin_f0_prob = yin_s.probability;
         }
 
         // Set event group bit, wait for all sync before moving on
@@ -459,7 +460,7 @@ void print_task_stats(void* pvParameters)
         // Print local peaks
         print_local_peaks();
         // Print fundamental frequency estimate
-        ESP_LOGI(TAG, "Fundamental frequency est: %.2f Hz (prob %.4f)", yin_f0_est, yin_s.probability);
+        ESP_LOGI(TAG, "YIN fundamental frequency est: %.2f Hz (prob %.4f)", yin_f0_est, yin_f0_prob);
 
         // Copy magnitude buffers
         // memcpy(rx_FFT_mag_cpy, rx_FFT_mag, PLOT_LEN * sizeof(float));
