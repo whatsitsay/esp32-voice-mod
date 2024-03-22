@@ -1,0 +1,8 @@
+{
+    "idf.adapterTargetName": "esp32",
+    "files.associations": {
+        "gpio_button.h": "c"
+    },
+    "idf.flashType": "JTAG",
+    "idf.port": "/dev/ttyUSB1"
+}

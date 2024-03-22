@@ -10,7 +10,7 @@
       "request": "launch",
       "cwd": "${workspaceFolder}/build",
       "program": "${workspaceFolder}/build/esp_vocoder.elf",
-      "miDebuggerPath": "C:/Users/Gabriel/.espressif/tools/xtensa-esp-elf-gdb/12.1_20221002/xtensa-esp-elf-gdb/bin/xtensa-esp32-elf-gdb.exe",
+      "miDebuggerPath": "/home/gabe/.espressif/tools/xtensa-esp-elf-gdb/12.1_20231023/xtensa-esp-elf-gdb/bin/xtensa-esp32-elf-gdb",
       "setupCommands": [
         { "text": "target remote :3333" },
         { "text": "set remote hardware-watchpoint-limit 2" },
